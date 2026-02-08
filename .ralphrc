@@ -3,7 +3,7 @@
 # Documentation: https://github.com/frankbria/ralph-claude-code
 
 # Project identification
-PROJECT_NAME="."
+PROJECT_NAME="rustscript"
 PROJECT_TYPE="generic"
 
 # Loop settings

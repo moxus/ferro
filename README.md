@@ -1,1 +1,1 @@
-# .
+# rustscript
