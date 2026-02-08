@@ -1,0 +1,18 @@
+// Test chained pointer-member access: (*ptr).field
+extern fn malloc(size: i32) -> *i8;
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn test_member(p: *Point) -> int {
+    unsafe {
+        let val: int = (*p).x;
+        return val;
+    }
+}
+
+fn main() {
+    let p: Point = Point { x: 10, y: 20 };
+}

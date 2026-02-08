@@ -1,0 +1,51 @@
+{
+  "name": "ferro-vscode",
+  "displayName": "Ferro Support",
+  "description": "Language support for Ferro",
+  "version": "0.0.1",
+  "publisher": "ferro",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:ferro"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ferro",
+        "aliases": [
+          "Ferro",
+          "ferro"
+        ],
+        "extensions": [
+          ".fe"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ferro",
+        "scopeName": "source.ferro",
+        "path": "./syntaxes/ferro.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^4.9.5"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  }
+}

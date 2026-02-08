@@ -1,0 +1,12 @@
+trait Summary {
+    fn summarize(self: Self) -> string;
+}
+
+impl Summary for string {
+    fn summarize(self: string) -> string {
+        self
+    }
+}
+
+let name: string = "Ferro";
+let msg = Summary::summarize(name);

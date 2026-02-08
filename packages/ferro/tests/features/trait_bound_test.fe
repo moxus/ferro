@@ -1,0 +1,18 @@
+// Test trait bounds: fn foo<T: Summary>(x: T) -> int
+
+trait Summary {
+    fn summarize(self: int) -> int;
+}
+
+impl Summary for int {
+    fn summarize(self: int) -> int {
+        self + 1
+    }
+}
+
+fn process<T: Summary>(x: T) -> T {
+    x
+}
+
+let result: int = process::<int>(41);
+print(result);

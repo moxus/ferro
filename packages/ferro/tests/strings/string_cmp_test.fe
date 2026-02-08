@@ -1,0 +1,91 @@
+// Test string lexicographic comparison operators
+
+let a: string = "apple";
+let b: string = "banana";
+let c: string = "apple";
+let d: string = "app";
+
+// "apple" < "banana" → true (1)
+if (a < b) {
+    print(1);
+} else {
+    print(0);
+};
+
+// "banana" < "apple" → false (0)
+if (b < a) {
+    print(0);
+} else {
+    print(1);
+};
+
+// "apple" > "banana" → false (0) → print 1 for correct
+if (a > b) {
+    print(0);
+} else {
+    print(1);
+};
+
+// "banana" > "apple" → true (1)
+if (b > a) {
+    print(1);
+} else {
+    print(0);
+};
+
+// "apple" <= "apple" → true (equal, 1)
+if (a <= c) {
+    print(1);
+} else {
+    print(0);
+};
+
+// "apple" >= "apple" → true (equal, 1)
+if (a >= c) {
+    print(1);
+} else {
+    print(0);
+};
+
+// "apple" <= "banana" → true (1)
+if (a <= b) {
+    print(1);
+} else {
+    print(0);
+};
+
+// "banana" >= "apple" → true (1)
+if (b >= a) {
+    print(1);
+} else {
+    print(0);
+};
+
+// Prefix: "app" < "apple" → true (1)
+if (d < a) {
+    print(1);
+} else {
+    print(0);
+};
+
+// Prefix: "apple" > "app" → true (1)
+if (a > d) {
+    print(1);
+} else {
+    print(0);
+};
+
+// Empty string is less than any non-empty string
+let e: string = "";
+if (e < a) {
+    print(1);
+} else {
+    print(0);
+};
+
+// Non-empty >= empty → true (1)
+if (a >= e) {
+    print(1);
+} else {
+    print(0);
+};

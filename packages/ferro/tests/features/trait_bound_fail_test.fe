@@ -1,0 +1,19 @@
+// Test trait bound violation: bool does NOT implement Summary
+
+trait Summary {
+    fn summarize(self: int) -> int;
+}
+
+impl Summary for int {
+    fn summarize(self: int) -> int {
+        self + 1
+    }
+}
+
+fn process<T: Summary>(x: T) -> T {
+    x
+}
+
+// This should produce a semantic error: bool does not implement Summary
+let result: bool = process::<bool>(true);
+print(1);

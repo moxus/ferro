@@ -1,0 +1,19 @@
+// Test generic enums
+
+enum Option<T> {
+    Some(T),
+    None
+}
+
+let x = Option::<int>::Some(42);
+let y = Option::<int>::None;
+
+match x {
+    Option::Some(v) => print(v),
+    Option::None => print(0),
+};
+
+match y {
+    Option::Some(v) => print(v),
+    Option::None => print(99),
+};

@@ -1,0 +1,59 @@
+// 1. Variables & Mutability
+let immutable = 10;
+// immutable = 11; // Compile Error
+
+let mut mutable_var: int = 20;
+mutable_var = 21; // OK
+
+// 2. Functions & Types
+fn add(a: int, b: int) -> int {
+    a + b // Implicit return
+}
+
+// 3. Control Flow (If & While)
+let status: string = if (mutable_var > 20) {
+    "high"
+} else {
+    "low"
+};
+
+let mut count = 0;
+while (count < 3) {
+    console.log(count);
+    count = count + 1;
+}
+
+// 4. Structs
+struct Point {
+    x: int,
+    y: int
+}
+
+let p = Point { x: 10, y: 20 };
+let sum = p.x + p.y;
+
+// 5. Pattern Matching
+fn get_msg(code: int) -> string {
+    match code {
+        200 => "OK",
+        404 => "Not Found",
+        500 => "Server Error",
+        _   => "Unknown",
+    }
+}
+
+// 6. Error Handling (Result & ?)
+fn divide(a: int, b: int) {
+    if (b == 0) {
+        return Err("Division by zero");
+    }
+    Ok(a / b)
+}
+
+fn safe_calc() {
+    let res = divide(10, 2)?;
+    let res2 = divide(res, 0)?; // Will return Err here
+    Ok(res2)
+}
+
+let calculation = safe_calc();

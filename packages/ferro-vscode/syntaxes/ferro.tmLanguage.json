@@ -1,0 +1,108 @@
+{
+	"name": "Ferro",
+	"scopeName": "source.ferro",
+	"patterns": [
+		{
+			"include": "#comments"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#macros"
+		},
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#types"
+		},
+		{
+			"include": "#numbers"
+		},
+		{
+			"include": "#operators"
+		}
+	],
+	"repository": {
+		"comments": {
+			"patterns": [
+				{
+					"name": "comment.line.double-slash.ferro",
+					"begin": "//",
+					"end": "$"
+				},
+				{
+					"name": "comment.block.ferro",
+					"begin": "/\\*",
+					"end": "\\*/"
+				}
+			]
+		},
+		"strings": {
+			"name": "string.quoted.double.ferro",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.ferro",
+					"match": "\\\\."
+				}
+			]
+		},
+		"macros": {
+			"patterns": [
+				{
+					"match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(\\!)",
+					"captures": {
+						"1": { "name": "entity.name.function.macro.ferro" },
+						"2": { "name": "keyword.operator.macro.ferro" }
+					}
+				},
+				{
+					"match": "(\\$)([a-zA-Z_][a-zA-Z0-9_]*)",
+					"captures": {
+						"1": { "name": "punctuation.definition.variable.macro.ferro" },
+						"2": { "name": "variable.other.macro.ferro" }
+					}
+				}
+			]
+		},
+		"keywords": {
+			"patterns": [
+				{
+					"name": "keyword.control.ferro",
+					"match": "\\b(if|else|match|return|let|mut|macro|quote)\\b"
+				},
+				{
+					"name": "storage.type.ferro",
+					"match": "\\b(fn|trait|impl)\\b"
+				},
+				{
+					"name": "constant.language.boolean.ferro",
+					"match": "\\b(true|false)\\b"
+				}
+			]
+		},
+		"types": {
+			"patterns": [
+				{
+					"name": "support.type.primitive.ferro",
+					"match": "\\b(int|string|bool|Self)\\b"
+				}
+			]
+		},
+		"numbers": {
+			"name": "constant.numeric.ferro",
+			"match": "\\b[0-9]+\\b"
+		},
+		"operators": {
+			"patterns": [
+				{
+					"name": "keyword.operator.ferro",
+					"match": "(=>|->|::|\\?|==|!=|<=|>=|=|<|>)"
+				}
+			]
+		}
+	}
+}

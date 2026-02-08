@@ -1,0 +1,29 @@
+import { fs_String, fs_print_string } from "../../src/runtime";
+
+// Match the signature in runtime.fs to avoid LLVM collision
+extern fn malloc(size: i32) -> *i8;
+
+unsafe {
+    // Allocate space for fs_String struct on heap
+    let s_ptr: *fs_String = malloc(16);
+    
+    if (s_ptr != null) {
+        // Initialize the struct fields
+        (*s_ptr).ptr = malloc(6);
+        (*s_ptr).len = 5;
+        (*s_ptr).cap = 6;
+        
+        if ((*s_ptr).ptr != null) {
+            // H-e-l-l-o
+            *((*s_ptr).ptr) = 72;
+            *((*s_ptr).ptr + 1) = 101;
+            *((*s_ptr).ptr + 2) = 108;
+            *((*s_ptr).ptr + 3) = 108;
+            *((*s_ptr).ptr + 4) = 111;
+            *((*s_ptr).ptr + 5) = 0;
+            
+            // Print it!
+            fs_print_string(s_ptr);
+        };
+    };
+}

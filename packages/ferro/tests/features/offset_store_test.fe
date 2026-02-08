@@ -1,0 +1,19 @@
+// Test offset pointer store with i32 pointers (avoids i8 type mismatch)
+extern fn malloc(size: i32) -> *i32;
+extern fn free(ptr: *i8);
+
+fn main() {
+    unsafe {
+        // Use i32 pointers to avoid i8 literal type issues
+        let buf: *i32 = malloc(40);
+        
+        // Write some values to buffer
+        *buf = 10;           // value at position 0
+        *(buf + 1) = 20;     // value at position 1
+        *(buf + 2) = 30;     // value at position 2
+        
+        // Cast for free
+        let ptr: *i8 = null;
+        // free(ptr);  // Skip for now since we can't cast
+    }
+}

@@ -1,0 +1,13 @@
+// Test pointer-to-struct types
+extern fn malloc(size: i32) -> *i8;
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() {
+    let p: Point = Point { x: 10, y: 20 };
+    // Try to get a pointer to the struct
+    // For now we just test if *Point type is parseable
+}

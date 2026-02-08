@@ -1,0 +1,11 @@
+// Test null keyword
+extern fn malloc(size: i32) -> *i8;
+extern fn free(ptr: *i8);
+
+fn main() {
+    unsafe {
+        let mut ptr: *i8 = null;
+        ptr = malloc(10);
+        free(ptr);
+    }
+}

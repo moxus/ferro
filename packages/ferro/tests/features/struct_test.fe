@@ -1,0 +1,22 @@
+// Test struct member access (without i8 issues)
+extern fn malloc(size: i32) -> *i8;
+extern fn free(ptr: *i8);
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() {
+    // Test pointer allocation and free (no storing)
+    unsafe {
+        let ptr: *i8 = malloc(10);
+        free(ptr);
+    }
+    
+    // Test struct member access
+    let p: Point = Point { x: 10, y: 20 };
+    let x: int = p.x;  // Read member
+    p.x = 30;  // Write member
+    let y: int = p.y;  // Read another member
+}

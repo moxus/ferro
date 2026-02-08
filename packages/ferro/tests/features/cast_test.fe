@@ -1,0 +1,11 @@
+// Test byte casting: explicit i8 <-> int conversions using 'as'
+
+let x: int = 300;
+let byte: i8 = x as i8;
+let back: int = byte as int;
+print(back);
+
+let y: int = 65;
+let b: i8 = y as i8;
+let c: int = b as int;
+print(c);

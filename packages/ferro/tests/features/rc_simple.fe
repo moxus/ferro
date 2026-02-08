@@ -1,0 +1,6 @@
+// RC test - copy
+let a = "hello"
+let b = a
+print(a)
+print(b)
+print("done")

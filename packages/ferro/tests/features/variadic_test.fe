@@ -1,0 +1,20 @@
+extern fn printf(fmt: *i8, ...) -> i32;
+extern fn putchar(c: i8) -> i32;
+
+export fn main() {
+    unsafe {
+        // Test 1: printf with one variadic int arg
+        printf("val: %d", 42);
+        putchar(10 as i8);
+
+        // Test 2: printf with two variadic int args
+        printf("%d + %d = %d", 10, 20, 30);
+        putchar(10 as i8);
+
+        // Test 3: printf with no variadic args (just format string)
+        printf("hello world");
+        putchar(10 as i8);
+    };
+}
+
+main();

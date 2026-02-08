@@ -1,0 +1,19 @@
+// Test pointer operations: dereference and pointer arithmetic
+extern fn malloc(size: i32) -> *i8;
+extern fn free(ptr: *i8);
+
+fn main() {
+    unsafe {
+        // Allocate 10 bytes
+        let ptr: *i8 = malloc(10);
+        
+        // Pointer arithmetic: access ptr + 5
+        let ptr2: *i8 = ptr + 5;
+        
+        // Dereference: read value at ptr
+        let val: i8 = *ptr;
+        
+        // Free the memory
+        free(ptr);
+    }
+}

@@ -1,0 +1,26 @@
+extern fn printf(fmt: *i8, val: i32) -> i32;
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+fn print_ptr(val: *i32) {
+    unsafe {
+        let v = *val;
+        print(v);
+    }
+}
+
+export fn main() {
+    let mut x: i32 = 42;
+    let ptr: *i32 = &x;
+    
+    print_ptr(ptr);
+    print_ptr(&x);
+    
+    let p = Point { x: 10, y: 20 };
+    print_ptr(&p.y);
+}
+
+main();

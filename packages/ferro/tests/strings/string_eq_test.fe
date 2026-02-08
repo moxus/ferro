@@ -1,0 +1,51 @@
+// Test string equality and inequality operators
+
+let a: string = "hello";
+let b: string = "hello";
+let c: string = "world";
+let d: string = "hell";
+
+// Equal strings
+if (a == b) {
+    print(1);
+} else {
+    print(0);
+};
+
+// Unequal strings (different content)
+if (a == c) {
+    print(0);
+} else {
+    print(1);
+};
+
+// Unequal strings (different length)
+if (a == d) {
+    print(0);
+} else {
+    print(1);
+};
+
+// != operator
+if (a != c) {
+    print(1);
+} else {
+    print(0);
+};
+
+// Empty string equality
+let e1: string = "";
+let e2: string = "";
+if (e1 == e2) {
+    print(1);
+} else {
+    print(0);
+};
+
+// Concatenated string equality
+let f: string = "hel" + "lo";
+if (a == f) {
+    print(1);
+} else {
+    print(0);
+};

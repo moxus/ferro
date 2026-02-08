@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.js.map
+*.d.ts.map
+
+# LLVM / native compilation artifacts
+*.ll
+*.o
+*.s
+
+# Compiled native binaries (no extension, from .fe sources)
+native_test
+native_control_flow
+native_struct
+test_c
+
+# Generated JS/TS from .fe transpilation
+js_test.ts
+js_test.js
+macro_test.js
+macro_test.ts
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+!packages/ferro-vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+
+# Plan / scratch files
+plan.md

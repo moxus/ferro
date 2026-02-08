@@ -1,0 +1,24 @@
+macro log(msg) {
+    quote! {
+        let _msg = $msg;
+    }
+}
+
+macro wrap(code) {
+    quote! {
+        let start = 0;
+        $code;
+        let end = 1;
+    }
+}
+
+fn echo(msg: str) {
+    console.log(msg);
+}
+
+
+fn main() {
+    log!("Hello Macro");
+    
+    wrap!({ let x = 10; });
+}

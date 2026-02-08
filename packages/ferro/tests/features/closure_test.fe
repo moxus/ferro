@@ -1,0 +1,18 @@
+// Test 1: Non-capturing closure passed to a function
+fn apply(f: (i32) -> i32, x: i32) -> i32 {
+    f(x)
+}
+
+let double = (x: i32) -> i32 { x * 2 };
+print(apply(double, 5));
+
+// Test 2: Closure with single capture
+let offset: int = 10;
+let add_offset = (x: i32) -> i32 { x + offset };
+print(apply(add_offset, 7));
+
+// Test 3: Closure with multiple captures
+let a: int = 1;
+let b: int = 2;
+let sum_all = (x: i32) -> i32 { x + a + b };
+print(apply(sum_all, 100));

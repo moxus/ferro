@@ -1,0 +1,8 @@
+
+fn test(ptr: *i8) {
+    let x = *ptr; // Error: Dereference of raw pointer requires unsafe block
+}
+
+fn main() {
+    // No-op
+}

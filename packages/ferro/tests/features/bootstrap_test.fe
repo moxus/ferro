@@ -1,0 +1,11 @@
+// Bootstrap test: No explicit runtime import — the CLI auto-injects it.
+// Tests string printing, integer printing, and string concatenation.
+
+let greeting: string = "Hello";
+let world: string = "World";
+let combined: string = greeting + " " + world;
+
+print(combined);
+print(42);
+print(0);
+print(-7);

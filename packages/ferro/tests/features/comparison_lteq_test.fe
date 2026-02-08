@@ -1,0 +1,23 @@
+fn main() {
+    let a: int = 5;
+    let b: int = 10;
+
+    // less-than-or-equal
+    let r1: bool = a <= b;
+    let r2: bool = a <= a;
+    let r3: bool = b <= a;
+
+    // greater-than-or-equal
+    let r4: bool = b >= a;
+    let r5: bool = a >= a;
+    let r6: bool = a >= b;
+
+    // in conditions
+    if (a <= 10) {
+        let x: int = 1;
+    }
+
+    if (b >= 5) {
+        let y: int = 2;
+    }
+}

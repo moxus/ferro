@@ -1,0 +1,32 @@
+// Test reference counting memory management
+
+// Test 1: basic string lifecycle (auto-released at scope exit)
+let a = "hello"
+print(a)
+
+// Test 2: variable copy (retain increments refcount)
+let b = "world"
+let c = b
+print(b)
+print(c)
+
+// Test 3: reassignment releases old value
+let mut d = "first"
+d = "second"
+print(d)
+
+// Test 4: string concatenation (fresh value, rc=1)
+let e = "hello" + " world"
+print(e)
+
+// Test 5: drop() for eager cleanup
+let mut f = "drop me"
+drop(f)
+
+// Test 6: multiple operations
+let g = "aaa"
+let h = g
+let i = g + "bbb"
+print(i)
+
+print("done")

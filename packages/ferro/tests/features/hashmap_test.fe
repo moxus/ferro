@@ -1,0 +1,14 @@
+// Test: HashMap<K, V> hash map
+let mut m = HashMap::<int, int>::new();
+m.insert(1, 100);
+m.insert(2, 200);
+m.insert(3, 300);
+print(m.len());
+print(m.get(1));
+print(m.get(2));
+print(m.get(3));
+print(m.contains_key(2));
+print(m.contains_key(99));
+m.remove(2);
+print(m.len());
+print(m.contains_key(2));

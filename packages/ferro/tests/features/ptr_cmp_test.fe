@@ -1,0 +1,12 @@
+// Test pointer comparison with null
+extern fn malloc(size: i32) -> *i8;
+extern fn free(ptr: *i8);
+
+fn main() {
+    unsafe {
+        let ptr: *i8 = malloc(10);
+        let is_null: bool = ptr == null;
+        let not_null: bool = ptr != null;
+        free(ptr);
+    }
+}

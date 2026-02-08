@@ -1,0 +1,6 @@
+
+extern fn malloc(size: i32) -> *i8;
+
+fn main() {
+    let ptr = malloc(10); // Error: Call to unsafe function requires unsafe block
+}

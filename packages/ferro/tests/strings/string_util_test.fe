@@ -1,0 +1,39 @@
+// Test string utility functions: len, index, slice, free
+
+import { fs_string_len, fs_string_index, fs_string_slice, fs_string_free } from "../../src/runtime";
+
+let s: string = "Hello";
+
+// Length
+print(fs_string_len(&s));
+
+// Index - 'H' = 72
+let ch: i8 = fs_string_index(&s, 0);
+print(ch as int);
+
+// Index - 'o' = 111
+let ch2: i8 = fs_string_index(&s, 4);
+print(ch2 as int);
+
+// Out-of-bounds index returns 0
+let ch3: i8 = fs_string_index(&s, 10);
+print(ch3 as int);
+
+// Negative index returns 0
+let ch4: i8 = fs_string_index(&s, 0 - 1);
+print(ch4 as int);
+
+// Slice "ell"
+let sub: string = fs_string_slice(&s, 1, 4);
+print(sub);
+
+// Slice length
+print(fs_string_len(&sub));
+
+// Empty slice (start == end)
+let empty: string = fs_string_slice(&s, 3, 3);
+print(fs_string_len(&empty));
+
+// Free
+fs_string_free(&sub);
+fs_string_free(&empty);

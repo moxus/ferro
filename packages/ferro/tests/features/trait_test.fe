@@ -1,0 +1,14 @@
+// Test traits and impl blocks
+
+trait Summary {
+    fn summarize(self: int) -> int;
+}
+
+impl Summary for int {
+    fn summarize(self: int) -> int {
+        self + 100
+    }
+}
+
+let x: int = Summary::summarize(42);
+print(x);

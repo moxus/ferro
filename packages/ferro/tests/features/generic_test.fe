@@ -1,0 +1,15 @@
+struct Box<T> {
+    val: T
+}
+
+export fn main() {
+    let b1 = Box::<int> { val: 10 };
+    let b2 = Box::<bool> { val: true };
+    
+    print(b1.val);
+    if (b2.val) {
+        print(100);
+    }
+}
+
+main();

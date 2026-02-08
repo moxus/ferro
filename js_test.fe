@@ -1,0 +1,11 @@
+fn main() {
+    console.log("Calling JS from FerroScript!");
+    
+    let arr: any = [];
+    arr.push(1);
+    arr.push(2);
+    
+    console.log(arr);
+}
+
+main();

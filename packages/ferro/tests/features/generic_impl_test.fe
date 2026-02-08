@@ -1,0 +1,26 @@
+// Test trait impl with struct type and multiple methods
+
+struct Wrapper {
+    value: int,
+}
+
+trait Extract {
+    fn get_value(self: Wrapper) -> int;
+    fn doubled(self: Wrapper) -> int;
+}
+
+impl Extract for Wrapper {
+    fn get_value(self: Wrapper) -> int {
+        self.value
+    }
+
+    fn doubled(self: Wrapper) -> int {
+        self.value + self.value
+    }
+}
+
+let w: Wrapper = Wrapper { value: 21 };
+let v: int = Extract::get_value(w);
+let d: int = Extract::doubled(w);
+print(v);
+print(d);

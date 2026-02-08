@@ -1,0 +1,23 @@
+struct Counter {
+    count: int
+}
+
+trait Ops {
+    fn increment(self: Counter) -> int;
+}
+
+impl Ops for Counter {
+    fn increment(self: Counter) -> int {
+        self.count + 1
+    }
+}
+
+let c: Counter = Counter { count: 10 };
+
+// Static dispatch (existing):
+let v1: int = Ops::increment(c);
+print(v1);
+
+// Method call syntax (new):
+let v2: int = c.increment();
+print(v2);

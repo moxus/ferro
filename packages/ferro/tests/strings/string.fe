@@ -1,0 +1,6 @@
+
+print("Literal Test");
+let s = "Var Test";
+print(s);
+let c = s + " Concat";
+print(c);
