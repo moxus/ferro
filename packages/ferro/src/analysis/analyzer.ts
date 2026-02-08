@@ -1,11 +1,12 @@
 import * as AST from "../ast/ast";
 import { SymbolTable } from "./symbol_table";
-import { Type, IntType, StringType, BoolType, VoidType, NullType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
+import { Type, IntType, StringType, BoolType, VoidType, NullType, FileType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
 
 export interface Diagnostic {
     message: string;
     line: number;
     col: number;
+    file?: string;
 }
 
 export class Analyzer {
@@ -21,7 +22,6 @@ export class Analyzer {
     private functionConstraints: Map<string, Map<string, string[]>> = new Map();  // funcName -> typeConstraints
 
     public analyze(program: AST.Program, initialScope?: SymbolTable, modulePath: string = "") {
-        this.diagnostics = [];
         this.currentModulePath = modulePath;
         if (initialScope) {
             this.scope = initialScope;
@@ -31,6 +31,7 @@ export class Analyzer {
             this.scope.define("console", { kind: "primitive", name: "any" }, false, 0);
             this.scope.define("print", { kind: "function", params: [], returnType: VoidType }, false, 0);
             this.scope.define("drop", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: VoidType }, false, 0);
+            this.scope.define("File", FileType, false, 0);
         }
 
         program.statements.forEach(stmt => this.visitStatement(stmt));
@@ -81,12 +82,25 @@ export class Analyzer {
     }
 
     private visitForStatement(stmt: AST.ForStatement) {
+        let elemType: Type = IntType;
+
         if (stmt.iterable instanceof AST.RangeExpression) {
             this.visitExpression(stmt.iterable);
+        } else {
+            // Collection iteration: infer element type
+            const iterableType = this.visitExpression(stmt.iterable);
+            if (iterableType.kind === "generic_inst" && iterableType.name === "Vec" && iterableType.args.length > 0) {
+                elemType = iterableType.args[0];
+            } else if (iterableType.kind === "generic_inst" && iterableType.name === "HashMap" && iterableType.args.length >= 1) {
+                elemType = iterableType.args[0]; // Key type
+            } else {
+                elemType = UnknownType;
+            }
         }
+
         const prevScope = this.scope;
         this.scope = this.scope.createChild();
-        this.scope.define(stmt.variable.value, IntType, false, stmt.token.line, this.currentModulePath);
+        this.scope.define(stmt.variable.value, elemType, false, stmt.token.line, this.currentModulePath);
         stmt.body.statements.forEach(s => this.visitStatement(s));
         this.scope = prevScope;
     }
@@ -243,6 +257,10 @@ export class Analyzer {
                 if (!typesEqual(left, right)) {
                     this.error(`Operator '${expr.operator}' not defined for ${typeToString(left)} and ${typeToString(right)}`, expr.token);
                 }
+                return BoolType;
+            }
+
+            if (expr.operator === "&&" || expr.operator === "||") {
                 return BoolType;
             }
         }
@@ -413,8 +431,43 @@ export class Analyzer {
         }
 
         if (expr instanceof AST.MethodCallExpression) {
-            this.visitExpression(expr.object);
+            const receiverType = this.visitExpression(expr.object);
             expr.arguments.forEach(a => this.visitExpression(a));
+            const methodName = expr.method.value;
+
+            // Vec method return types
+            if (receiverType.kind === "generic_inst" && receiverType.name === "Vec" && receiverType.args.length > 0) {
+                const elemType = receiverType.args[0];
+                if (methodName === "get" || methodName === "pop") return elemType;
+                if (methodName === "len") return IntType;
+                if (methodName === "filter" || methodName === "collect") {
+                    return { kind: "generic_inst", name: "Vec", args: [elemType] };
+                }
+                if (methodName === "map" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg);
+                        if (closureType.kind === "function") {
+                            return { kind: "generic_inst", name: "Vec", args: [closureType.returnType] };
+                        }
+                    }
+                    return { kind: "generic_inst", name: "Vec", args: [elemType] };
+                }
+                return UnknownType;
+            }
+
+            // HashMap method return types
+            if (receiverType.kind === "generic_inst" && receiverType.name === "HashMap" && receiverType.args.length >= 2) {
+                const keyType = receiverType.args[0];
+                const valueType = receiverType.args[1];
+                if (methodName === "get") return valueType;
+                if (methodName === "len") return IntType;
+                if (methodName === "contains_key") return BoolType;
+                if (methodName === "keys") return { kind: "generic_inst", name: "Vec", args: [keyType] };
+                if (methodName === "values") return { kind: "generic_inst", name: "Vec", args: [valueType] };
+                return UnknownType;
+            }
+
             return UnknownType;
         }
 
@@ -617,6 +670,6 @@ export class Analyzer {
     }
 
     private error(msg: string, token: { line: number, column: number }) {
-        this.diagnostics.push({ message: msg, line: token.line, col: token.column });
+        this.diagnostics.push({ message: msg, line: token.line, col: token.column, file: this.currentModulePath || undefined });
     }
 }

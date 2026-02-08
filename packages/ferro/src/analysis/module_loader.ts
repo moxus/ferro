@@ -6,10 +6,12 @@ import * as AST from "../ast/ast";
 import { Analyzer } from "./analyzer";
 import { SymbolTable } from "./symbol_table";
 import { Expander } from "../macros/expander";
-import { VoidType } from "./types";
+import { VoidType, FileType } from "./types";
+import { ParseError } from "../errors";
 
 export interface CompiledModule {
     path: string;
+    source: string; // Raw source text, for error display
     program: AST.Program;
     exports: SymbolTable; // Symbols exported by this module
     imports: Map<string, string>; // Map import source string to resolved absolute path
@@ -46,7 +48,7 @@ export class ModuleLoader {
 
         if (parser.getErrors().length > 0) {
             this.loading.delete(absolutePath);
-            throw new Error(`Parse errors in ${entryPath}:\n${parser.getErrors().map(e => e.msg).join("\n")}`);
+            throw new ParseError(parser.getErrors(), absolutePath, content);
         }
 
         // Expand macros before analysis
@@ -55,6 +57,7 @@ export class ModuleLoader {
 
         const module: CompiledModule = {
             path: absolutePath,
+            source: content,
             program: program,
             exports: new SymbolTable(),
             imports: new Map()
@@ -65,6 +68,7 @@ export class ModuleLoader {
         moduleScope.define("console", { kind: "primitive", name: "any" }, false, 0);
         moduleScope.define("print", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: VoidType }, false, 0);
         moduleScope.define("drop", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: VoidType }, false, 0);
+        moduleScope.define("File", FileType, false, 0);
 
         // First pass: Resolve imports and recursively load
         program.statements.forEach(stmt => {

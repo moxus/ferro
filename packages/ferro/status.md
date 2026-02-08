@@ -1,6 +1,6 @@
 # Ferro Status Log
 
-**Date:** February 8, 2026
+**Date:** February 9, 2026
 **Project Name:** Ferro (Rusty addon for JS/TS with Native LLVM support)
 
 ---
@@ -192,6 +192,43 @@
 - [x] **RC Management**: Captured strings are retained when stored into the environment struct and tracked for release in the closure function's scope.
 - [x] **V1 Limitations**: Stack-allocated environments (closures must not outlive creating scope), capture by value only, typed closure params required for `--native`.
 
+### 22. Iterator Protocol (`for x in collection`)
+- [x] **Parser**: `parseForStatement()` now accepts any expression as the iterable, not just `RangeExpression`. If `DotDot` follows the expression, it's a range; otherwise it's a collection iteration.
+- [x] **Analyzer**: `visitForStatement()` infers the loop variable's element type from the collection type (`Vec<T>` → `T`). Range for-loops still define the variable as `int`.
+- [x] **TypeScript Backend**: Non-range for-loops emit `for (const x of collection)`, leveraging native JS iteration.
+- [x] **LLVM Backend**: `emitVecForLoop()` desugars `for (x in vec)` to an index-based loop using `fs_vec_len` and `fs_vec_get`, with RC scope management.
+- [x] **Backward Compatibility**: Existing `for (x in 0..10)` range syntax continues to work unchanged.
+
+### 23. Iterator Protocol Enhancements
+- [x] **HashMap Key Iteration**: `for (k in map)` iterates over HashMap keys. Cursor-based `fs_hashmap_iter_next` runtime function scans slots, skipping empty/tombstone entries.
+- [x] **Analyzer**: `visitForStatement()` infers key type from `HashMap<K,V>` for loop variable. `visitMethodCallExpression()` returns proper types for collection methods (`map`→`Vec<U>`, `filter`→`Vec<T>`, `keys`→`Vec<K>`, `values`→`Vec<V>`, `len`→`int`, etc.).
+- [x] **Vec.map()**: Eager combinator — `vec.map((x: int) -> int { x * 2 })` creates new Vec with transformed elements. LLVM backend emits inline loop with closure fat-pointer calls.
+- [x] **Vec.filter()**: Eager combinator — `vec.filter((x: int) -> bool { x > 1 })` creates new Vec with elements passing the predicate. Conditional push via `br i1`.
+- [x] **Vec.collect()**: Identity operation — since `map`/`filter` are eager and already return Vecs.
+- [x] **HashMap.keys()**: Returns `Vec<K>` of all keys via cursor-based iteration + `fs_vec_push`.
+- [x] **HashMap.values()**: Returns `Vec<V>` of all values via cursor-based iteration with pointer offset by `key_size`.
+- [x] **TypeScript Backend**: HashMap iteration emits `for (const k of m.keys())`. `keys()`/`values()` emit `[...m.keys()]`/`[...m.values()]` (spread into arrays). `collect()` is identity. `map`/`filter` pass through natively.
+- [x] **Type Propagation**: LLVM emitter tracks Vec element types through `map`/`filter`/`keys`/`values` result chains via `vecElemTypes` map and `lastMapOutputElemType`.
+
+### 24. Logical Operators (`&&` / `||`)
+- [x] **Token Types**: Added `AmpAmp` (`&&`) and `PipePipe` (`||`) to the lexer with peek-based two-character recognition.
+- [x] **Parser**: Registered at `LOGICAL_AND` and `LOGICAL_OR` precedences (between `ASSIGN` and `EQUALS`), matching C/Rust operator precedence.
+- [x] **Analyzer**: Type-checks both operands as `bool`, returns `bool`.
+- [x] **TypeScript Backend**: Works automatically via generic `InfixExpression` pass-through.
+- [x] **LLVM Backend**: `&&` emits `and i1`, `||` emits `or i1`.
+- [x] **Runtime Fix**: Fixed trailing semicolons after `while` blocks and `if-else` chains in `runtime.fe` File I/O section that caused parse errors blocking `--native` builds.
+
+---
+
+### 25. Rust-Style Error Messages
+- [x] **`errors.ts` Module**: New `ParseError` class (structured parse errors with file path and source text) and `formatError()` function producing Rust-style output with ANSI colors.
+- [x] **Diagnostic `file` Field**: Added optional `file?: string` to the `Diagnostic` interface. Analyzer `error()` method now tags each diagnostic with `this.currentModulePath`.
+- [x] **Multi-Module Diagnostics Fix**: Removed `this.diagnostics = []` reset in `analyze()` that was wiping diagnostics from previously analyzed modules.
+- [x] **Source Text on `CompiledModule`**: Added `source: string` field so raw source text is available for error display without re-reading files.
+- [x] **Structured Parse Errors**: Module loader throws `ParseError` instead of a generic `Error`, preserving line/col/file info.
+- [x] **CLI Formatting**: Errors display with file path, line number, column, source line context, and a caret pointing to the error position. ANSI colors (red for errors, blue for gutter) with TTY detection.
+- [x] **LSP Unaffected**: All `Diagnostic` changes are additive (optional fields), LSP continues to work unchanged.
+
 ---
 
 ## 🚧 In Progress Features
@@ -203,7 +240,11 @@
 ## 🛠 Planned Features
 
 ### 1. Standard Library & Runtime
-- **Standard Library Functions**: File I/O, math utilities, and other common built-ins.
+- **Standard Library Functions**: ~~File I/O~~, math utilities, and other common built-ins.
+  - ✅ **File I/O**: Basic file operations implemented in `runtime.fe` with `fs_file_open`, `fs_file_close`, `fs_file_read`, `fs_file_write`, `fs_file_read_line`, `fs_file_write_string`, `fs_file_seek`, `fs_file_tell`
+  - ✅ **File Type**: Added `File` primitive type to type system
+  - ✅ **Runtime Integration**: Added file function declarations to LLVM emitter
+  - 🔄 **Remaining**: Higher-level abstractions, error handling, built-in functions for file operations
 
 ### 2. Low Priority
 - **Cycle Detection**: Optional weak references or cycle-collector for complex data structures with reference cycles.
@@ -211,8 +252,8 @@
 ### 3. Language Features & Backends
 - **FFI Enhancements**: More robust handling of foreign function interfaces and platform-specific ABI considerations.
 - **Closures / First-Class Functions**: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. Remaining: heap-allocated environments for escaping closures, mutable capture by reference, bidirectional type inference for untyped trailing lambda params.
-- **Iterator Protocol**: `for x in collection` support via `IntoIterator` trait, extending the existing range-based `for` loop to work with collections.
-- **Error Messages with Source Locations**: Attach file, line, and column info to diagnostics so compiler errors point to exact source positions.
+- **Iterator Protocol**: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. Remaining: user-defined `IntoIterator` trait, iterator combinators on HashMap, lazy iterator chains.
+- ~~**Error Messages with Source Locations**~~: **Completed (see §25)**.
 
 ---
 

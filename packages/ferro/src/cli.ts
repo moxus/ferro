@@ -5,6 +5,7 @@ import { exec } from "child_process";
 import { Emitter } from "./codegen/emitter";
 import { LLVMEmitter } from "./codegen/llvm_emitter";
 import { ModuleLoader } from "./analysis/module_loader";
+import { ParseError, formatError } from "./errors";
 
 function main() {
     const args = process.argv.slice(2);
@@ -32,8 +33,14 @@ function main() {
         const entryModule = loader.load(filename);
 
         if (loader.getAnalyzer().diagnostics.length > 0) {
-            console.error("Semantic Errors:");
-            loader.getAnalyzer().diagnostics.forEach(d => console.error(`${d.message} at line ${d.line}`));
+            const modules = loader.getAllModules();
+            loader.getAnalyzer().diagnostics.forEach(d => {
+                const file = d.file || path.resolve(filename);
+                const mod = modules.get(file);
+                const source = mod?.source || "";
+                console.error(formatError(d.message, file, d.line, d.col, source));
+                console.error("");
+            });
             process.exit(1);
         }
 
@@ -85,8 +92,14 @@ function main() {
             });
         }
     } catch (e: any) {
-        console.error("Compilation Error:");
-        console.error(e.message || e);
+        if (e instanceof ParseError) {
+            e.errors.forEach(err => {
+                console.error(formatError(err.msg, e.file, err.line, err.col, e.source));
+                console.error("");
+            });
+            process.exit(1);
+        }
+        console.error(`\x1b[1m\x1b[31merror\x1b[0m\x1b[1m: ${e.message || e}\x1b[0m`);
         process.exit(1);
     }
 }
