@@ -8,6 +8,15 @@ extern fn memcpy(dest: *i8, src: *i8, n: i32) -> *i8;
 extern fn putchar(c: i8) -> i32;
 extern fn realloc(ptr: *i8, size: i32) -> *i8;
 
+// File I/O functions
+extern fn fopen(filename: *i8, mode: *i8) -> *i8;
+extern fn fclose(stream: *i8) -> i32;
+extern fn fread(ptr: *i8, size: i32, nmemb: i32, stream: *i8) -> i32;
+extern fn fwrite(ptr: *i8, size: i32, nmemb: i32, stream: *i8) -> i32;
+extern fn fseek(stream: *i8, offset: i64, whence: i32) -> i32;
+extern fn ftell(stream: *i8) -> i64;
+extern fn fgets(s: *i8, size: i32, stream: *i8) -> *i8;
+
 // String struct - matches LLVM layout { i8*, i32, i32 }
 // Refcount is stored at ptr[-4] (4 bytes prepended to the heap allocation)
 export struct fs_String {
@@ -657,4 +666,173 @@ export fn fs_hashmap_free(m: *fs_HashMap) {
             (*m).capacity = 0;
         };
     }
+}
+
+// Iterate to the next occupied entry starting from *cursor.
+// Returns a pointer to the key bytes of the next occupied entry, or null when done.
+// Caller should initialize *cursor = 0 before the first call.
+export fn fs_hashmap_iter_next(m: *fs_HashMap, cursor: *i32) -> *i8 {
+    unsafe {
+        let mut idx: i32 = *cursor;
+        while (idx < (*m).capacity) {
+            let entry: *i8 = (*m).data + idx * (*m).entry_size;
+            let occ: i32 = *((entry + 4) as *i32);
+            if (occ == 1) {
+                *cursor = idx + 1;
+                return entry + 8;
+            };
+            idx = idx + 1;
+        }
+        *cursor = (*m).capacity;
+    }
+    return null;
+}
+
+// ---- File I/O Functions ----
+
+// File handle struct (opaque pointer to FILE*)
+export struct fs_File {
+    handle: *i8
+}
+
+// Open a file with given mode
+// Returns null file handle on error
+export fn fs_file_open(filename: *fs_String, mode: *fs_String) -> fs_File {
+    let mut result: fs_File = fs_File { handle: null };
+    unsafe {
+        // Convert Ferro strings to null-terminated C strings
+        let mut filename_buf: *i8 = null;
+        let mut mode_buf: *i8 = null;
+
+        if ((*filename).ptr != null) {
+            filename_buf = malloc((*filename).len + 1);
+            if (filename_buf != null) {
+                memcpy(filename_buf, (*filename).ptr, (*filename).len);
+                *(filename_buf + (*filename).len) = 0 as i8;
+            };
+        };
+
+        if ((*mode).ptr != null) {
+            mode_buf = malloc((*mode).len + 1);
+            if (mode_buf != null) {
+                memcpy(mode_buf, (*mode).ptr, (*mode).len);
+                *(mode_buf + (*mode).len) = 0 as i8;
+            };
+        };
+
+        if (filename_buf != null && mode_buf != null) {
+            result.handle = fopen(filename_buf, mode_buf);
+        };
+
+        // Free temporary buffers
+        if (filename_buf != null) {
+            free(filename_buf);
+        };
+        if (mode_buf != null) {
+            free(mode_buf);
+        };
+    }
+    return result;
+}
+
+// Close a file
+// Returns 0 on success, EOF on error
+export fn fs_file_close(file: *fs_File) -> i32 {
+    let mut result: i32 = 0;
+    unsafe {
+        if ((*file).handle != null) {
+            result = fclose((*file).handle);
+            (*file).handle = null;
+        };
+    }
+    return result;
+}
+
+// Read from file into a buffer
+// Returns number of items read
+export fn fs_file_read(file: *fs_File, buffer: *i8, size: i32, count: i32) -> i32 {
+    let mut result: i32 = 0;
+    unsafe {
+        if ((*file).handle != null) {
+            result = fread(buffer, size, count, (*file).handle);
+        };
+    }
+    return result;
+}
+
+// Write from buffer to file
+// Returns number of items written
+export fn fs_file_write(file: *fs_File, buffer: *i8, size: i32, count: i32) -> i32 {
+    let mut result: i32 = 0;
+    unsafe {
+        if ((*file).handle != null) {
+            result = fwrite(buffer, size, count, (*file).handle);
+        };
+    }
+    return result;
+}
+
+// Read a line from file into a string
+// Returns empty string on error or EOF
+export fn fs_file_read_line(file: *fs_File) -> fs_String {
+    let mut result: fs_String = fs_string_alloc(256); // Initial buffer size
+    unsafe {
+        if ((*file).handle != null && result.ptr != null) {
+            let line_ptr: *i8 = fgets(result.ptr, result.cap, (*file).handle);
+            if (line_ptr != null) {
+                // Find actual length (up to newline or null terminator)
+                let mut len: i32 = 0;
+                while (len < result.cap && *(result.ptr + len) != 0 as i8) {
+                    len = len + 1;
+                }
+                result.len = len;
+
+                // Remove trailing newline if present
+                if (len > 0 && *(result.ptr + len - 1) == 10 as i8) {
+                    result.len = len - 1;
+                    *(result.ptr + result.len) = 0 as i8;
+                }
+            } else {
+                // EOF or error
+                result.len = 0;
+            };
+        };
+    }
+    return result;
+}
+
+// Write a string to file
+// Returns number of characters written
+export fn fs_file_write_string(file: *fs_File, s: *fs_String) -> i32 {
+    let mut result: i32 = 0;
+    unsafe {
+        if ((*file).handle != null && (*s).ptr != null) {
+            result = fwrite((*s).ptr, 1, (*s).len, (*file).handle);
+        };
+    }
+    return result;
+}
+
+// Seek to position in file
+// Returns 0 on success, non-zero on error
+export fn fs_file_seek(file: *fs_File, offset: i64, whence: i32) -> i32 {
+    let mut result: i32 = -1;
+    unsafe {
+        if ((*file).handle != null) {
+            result = fseek((*file).handle, offset, whence);
+        };
+    }
+    return result;
+}
+
+// Get current position in file
+// Returns -1 on error
+export fn fs_file_tell(file: *fs_File) -> i64 {
+    let mut result: i64 = -1;
+    unsafe {
+        if ((*file).handle != null) {
+            result = ftell((*file).handle);
+        };
+    }
+    return result;
 }

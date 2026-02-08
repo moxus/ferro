@@ -5,6 +5,8 @@ import * as AST from "../ast/ast";
 enum Precedence {
   LOWEST = 1,
   ASSIGN,      // =
+  LOGICAL_OR,  // ||
+  LOGICAL_AND, // &&
   EQUALS,      // ==
   LESSGREATER, // > or <
   SUM,         // +
@@ -23,6 +25,8 @@ const PRECEDENCES: Record<string, Precedence> = {
   [TokenType.Bang]: Precedence.CALL,
   [TokenType.Question]: Precedence.QUESTION,
   [TokenType.Equals]: Precedence.ASSIGN,
+  [TokenType.PipePipe]: Precedence.LOGICAL_OR,
+  [TokenType.AmpAmp]: Precedence.LOGICAL_AND,
   [TokenType.EqEq]: Precedence.EQUALS,
   [TokenType.NotEq]: Precedence.EQUALS,
   [TokenType.LT]: Precedence.LESSGREATER,
@@ -92,6 +96,8 @@ export class Parser {
     this.registerInfix(TokenType.GT, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.LtEq, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.GtEq, this.parseInfixExpression.bind(this));
+    this.registerInfix(TokenType.AmpAmp, this.parseInfixExpression.bind(this));
+    this.registerInfix(TokenType.PipePipe, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.LPharen, this.parseCallExpression.bind(this));
     this.registerInfix(TokenType.DoubleColon, this.parseStaticCall.bind(this));
     this.registerInfix(TokenType.Dot, this.parseMemberAccess.bind(this));
@@ -173,17 +179,26 @@ export class Parser {
     const variable = new AST.Identifier(this.curToken, this.curToken.literal);
     if (!this.expectPeek(TokenType.In)) return null;
     this.nextToken(); // advance past 'in' to start expression
-    const start = this.parseExpression(Precedence.LOWEST);
-    if (!start) return null;
-    if (!this.expectPeek(TokenType.DotDot)) return null;
-    this.nextToken(); // advance past '..' to end expression
-    const end = this.parseExpression(Precedence.LOWEST);
-    if (!end) return null;
-    const range = new AST.RangeExpression(this.curToken, start, end);
+    const expr = this.parseExpression(Precedence.LOWEST);
+    if (!expr) return null;
+
+    let iterable: AST.Expression;
+    if (this.peekTokenIs(TokenType.DotDot)) {
+      // Range syntax: start..end
+      this.nextToken(); // consume ..
+      this.nextToken(); // advance past '..' to end expression
+      const end = this.parseExpression(Precedence.LOWEST);
+      if (!end) return null;
+      iterable = new AST.RangeExpression(this.curToken, expr, end);
+    } else {
+      // Collection iteration: for (x in collection)
+      iterable = expr;
+    }
+
     if (!this.expectPeek(TokenType.RPharen)) return null;
     if (!this.expectPeek(TokenType.LBrace)) return null;
     const body = this.parseBlockStatement();
-    return new AST.ForStatement(token, variable, range, body);
+    return new AST.ForStatement(token, variable, iterable, body);
   }
 
   private parseUnsafeExpression(): AST.Expression | null {

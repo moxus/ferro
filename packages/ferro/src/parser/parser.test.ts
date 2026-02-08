@@ -181,6 +181,26 @@ describe("Parser", () => {
       expect(range.end).toBeInstanceOf(AST.InfixExpression);
   });
 
+  it("should parse for-in with collection expression", () => {
+      const input = `for (x in v) { print(x); }`;
+      const lexer = new Lexer(input);
+      const parser = new Parser(lexer);
+      const program = parser.ParseProgram();
+
+      if (parser.getErrors().length > 0) {
+          console.error(parser.getErrors());
+      }
+      expect(parser.getErrors().length).toBe(0);
+      expect(program.statements.length).toBe(1);
+
+      const stmt = program.statements[0] as AST.ForStatement;
+      expect(stmt).toBeInstanceOf(AST.ForStatement);
+      expect(stmt.variable.value).toBe("x");
+      expect(stmt.iterable).toBeInstanceOf(AST.Identifier);
+      expect((stmt.iterable as AST.Identifier).value).toBe("v");
+      expect(stmt.body.statements.length).toBe(1);
+  });
+
   it("should still parse impl blocks with 'for' keyword", () => {
       const input = `impl Display for MyType { fn show(self: MyType) -> string { "hello"; } }`;
       const lexer = new Lexer(input);

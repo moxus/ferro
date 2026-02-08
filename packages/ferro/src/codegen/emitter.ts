@@ -3,6 +3,7 @@ import * as AST from "../ast/ast";
 
 export class Emitter {
     private enumDefinitions: Map<string, AST.EnumDefinition> = new Map();
+    private hashMapVars: Set<string> = new Set();
 
     public emit(node: AST.Node): string {
         if (node instanceof AST.Program) {
@@ -86,6 +87,13 @@ export class Emitter {
         if (node instanceof AST.MethodCallExpression) {
             const obj = this.emit(node.object);
             const method = node.method.value;
+            // collect() is identity for TS arrays (map/filter already return arrays eagerly)
+            if (method === "collect") return obj;
+            // HashMap keys()/values() return iterators in JS, need to spread into arrays
+            if (node.object instanceof AST.Identifier && this.hashMapVars.has(node.object.value)) {
+                if (method === "keys") return `[...${obj}.keys()]`;
+                if (method === "values") return `[...${obj}.values()]`;
+            }
             const args = node.arguments.map(a => this.emit(a)).join(", ");
             return `${obj}.${method}(${args})`;
         }
@@ -139,6 +147,13 @@ function _getType(obj: any) {
         const keyword = stmt.mutable ? "let" : "const";
         const value = stmt.value ? this.emit(stmt.value) : "undefined";
         const typeAnn = stmt.type ? `: ${stmt.type.toString()}` : "";
+        // Track HashMap variables for iteration semantics
+        if (stmt.value instanceof AST.StaticCallExpression) {
+            const sc = stmt.value as AST.StaticCallExpression;
+            if (sc.receiver.value === "HashMap" && sc.method.value === "new") {
+                this.hashMapVars.add(stmt.name.value);
+            }
+        }
         return `${keyword} ${stmt.name.value}${typeAnn} = ${value};`;
     }
 
@@ -291,7 +306,15 @@ function _getType(obj: any) {
             const body = this.emitBlockStatement(stmt.body);
             return `for (let ${varName} = ${start}; ${varName} < ${end}; ${varName}++) ${body}`;
         }
-        return "/* unsupported for loop */";
+        // Collection iteration
+        const varName = stmt.variable.value;
+        const collection = this.emit(stmt.iterable);
+        const body = this.emitBlockStatement(stmt.body);
+        // HashMap iteration: JS Map for...of yields [key, value], so use .keys()
+        if (stmt.iterable instanceof AST.Identifier && this.hashMapVars.has(stmt.iterable.value)) {
+            return `for (const ${varName} of ${collection}.keys()) ${body}`;
+        }
+        return `for (const ${varName} of ${collection}) ${body}`;
     }
 
     private emitBlockStatement(block: AST.BlockStatement, forceReturn: boolean = false): string {

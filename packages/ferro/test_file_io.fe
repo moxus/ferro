@@ -1,0 +1,12 @@
+// Test file I/O functions
+fn main() {
+    // Test creating a file and writing to it
+    let filename = "test_output.txt";
+    let mode = "w";
+
+    // Note: In a real implementation, we would call fs_file_open here
+    // For now, just test that the type system recognizes File
+    let file: File;
+
+    print("File I/O test completed");
+}

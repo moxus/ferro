@@ -1,0 +1,66 @@
+// Test: for-in with Vec<int>
+let mut v = Vec::<int>::new();
+v.push(10);
+v.push(20);
+v.push(30);
+
+let mut total: int = 0;
+for (x in v) {
+    total = total + x;
+}
+print(total);
+// Expected: 60
+
+// Test: range for-loop still works
+let mut sum: int = 0;
+for (i in 0..5) {
+    sum = sum + i;
+}
+print(sum);
+// Expected: 10
+
+// Test: HashMap key iteration
+let mut m = HashMap::<int, int>::new();
+m.insert(1, 10);
+m.insert(2, 20);
+m.insert(3, 30);
+
+let mut key_sum: int = 0;
+for (k in m) {
+    key_sum = key_sum + k;
+}
+print(key_sum);
+// Expected: 6
+
+// Test: Vec.map with closure
+let mut nums = Vec::<int>::new();
+nums.push(1);
+nums.push(2);
+nums.push(3);
+
+let doubled = nums.map((x: int) -> int { x * 2 });
+let mut dsum: int = 0;
+for (d in doubled) {
+    dsum = dsum + d;
+}
+print(dsum);
+// Expected: 12
+
+// Test: Vec.filter with closure
+let big = nums.filter((x: int) -> bool { x > 1 });
+print(big.len());
+// Expected: 2
+
+// Test: HashMap.keys()
+let ks = m.keys();
+print(ks.len());
+// Expected: 3
+
+// Test: HashMap.values()
+let vs = m.values();
+let mut vsum: int = 0;
+for (val in vs) {
+    vsum = vsum + val;
+}
+print(vsum);
+// Expected: 60

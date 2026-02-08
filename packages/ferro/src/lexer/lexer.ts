@@ -146,7 +146,20 @@ export class Lexer {
         tok = { type: TokenType.Dollar, literal: this.ch, line, column: col };
         break;
       case "&":
-        tok = { type: TokenType.Ampersand, literal: this.ch, line, column: col };
+        if (this.peekChar() === "&") {
+          this.readChar();
+          tok = { type: TokenType.AmpAmp, literal: "&&", line, column: col };
+        } else {
+          tok = { type: TokenType.Ampersand, literal: this.ch, line, column: col };
+        }
+        break;
+      case "|":
+        if (this.peekChar() === "|") {
+          this.readChar();
+          tok = { type: TokenType.PipePipe, literal: "||", line, column: col };
+        } else {
+          tok = { type: TokenType.Illegal, literal: this.ch, line, column: col };
+        }
         break;
       case '"':
         tok = { type: TokenType.String, literal: this.readString(), line, column: col };

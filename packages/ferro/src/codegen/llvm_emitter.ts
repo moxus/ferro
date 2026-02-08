@@ -76,6 +76,8 @@ export class LLVMEmitter {
     private vecElemTypes: Map<string, string> = new Map();
     // HashMap key/value type tracking: variable name → { keyType, valueType }
     private hashMapTypes: Map<string, { keyType: string, valueType: string }> = new Map();
+    // Tracks the output element type of the last emitted Vec.map() call for type propagation
+    private lastMapOutputElemType: string = "i32";
 
     // Reference Counting support
     // Stack of scope frames: each frame tracks RC variable names defined in that scope
@@ -245,7 +247,10 @@ export class LLVMEmitter {
             "fs_vec_len", "fs_vec_free",
             "fs_hash_int", "fs_hash_string",
             "fs_hashmap_new", "fs_hashmap_insert", "fs_hashmap_get",
-            "fs_hashmap_contains", "fs_hashmap_remove", "fs_hashmap_len", "fs_hashmap_free"
+            "fs_hashmap_contains", "fs_hashmap_remove", "fs_hashmap_len", "fs_hashmap_free",
+            "fs_hashmap_iter_next",
+            "fs_file_open", "fs_file_close", "fs_file_read", "fs_file_write",
+            "fs_file_read_line", "fs_file_write_string", "fs_file_seek", "fs_file_tell"
         ]);
         modules.forEach((mod, path) => {
             mod.program.statements.forEach(stmt => {
@@ -410,6 +415,7 @@ export class LLVMEmitter {
         if (typeName === "string") return this.runtimeStringType || "%String";
         if (typeName === "void") return "void";
         if (typeName === "i8") return "i8";
+        if (typeName === "File") return "%File";
         // Vec<T> and HashMap<K,V> map to their runtime struct types
         if (typeName === "Vec") return this.getVecStructType();
         if (typeName === "HashMap") return this.getHashMapStructType();
@@ -658,13 +664,22 @@ export class LLVMEmitter {
         // Only emit %String and runtime declarations if no module defines the runtime functions
         const hasRuntimeModule = this.runtimeExports.size > 0;
         if (!hasRuntimeModule) {
-            this.types += `%String = type { i8*, i32, i32 }\n\n`;
+            this.types += `%String = type { i8*, i32, i32 }\n`;
+            this.types += `%File = type { i8* }\n\n`;
             this.output += `declare %String @fs_string_alloc(i32)\n`;
             this.output += `declare %String @fs_string_from_literal(i8*, i32)\n`;
             this.output += `declare %String @fs_string_concat(%String*, %String*)\n`;
             this.output += `declare void @fs_print_string(%String*)\n`;
             this.output += `declare void @fs_rc_retain(%String*)\n`;
             this.output += `declare void @fs_rc_release(%String*)\n`;
+            this.output += `declare %File @fs_file_open(%String*, %String*)\n`;
+            this.output += `declare i32 @fs_file_close(%File*)\n`;
+            this.output += `declare i32 @fs_file_read(%File*, i8*, i32, i32)\n`;
+            this.output += `declare i32 @fs_file_write(%File*, i8*, i32, i32)\n`;
+            this.output += `declare %String @fs_file_read_line(%File*)\n`;
+            this.output += `declare i32 @fs_file_write_string(%File*, %String*)\n`;
+            this.output += `declare i32 @fs_file_seek(%File*, i64, i32)\n`;
+            this.output += `declare i64 @fs_file_tell(%File*)\n`;
             this.output += `declare i32 @printf(i8*, ...)\n`;
             this.declaredExterns.add("printf");
             this.variadicExterns.add("printf");
@@ -1013,7 +1028,39 @@ export class LLVMEmitter {
                 }
             }
 
+            // Track Vec element types from method call results (map, filter, keys, values)
+            if (stmt.value instanceof AST.MethodCallExpression) {
+                const mc = stmt.value as AST.MethodCallExpression;
+                const objType = this.getExpressionType(mc.object);
+                const mName = mc.method.value;
+                if (this.isVecType(objType)) {
+                    if (mName === "filter" || mName === "collect") {
+                        const srcElemType = this.getVecElemType(mc.object);
+                        this.vecElemTypes.set(stmt.name.value, srcElemType);
+                    } else if (mName === "map") {
+                        // Will be set by emitVecMethodCall during emission
+                        // Use a deferred approach: emit first, then read lastMapOutputElemType
+                    }
+                } else if (this.isHashMapType(objType)) {
+                    const { keyType, valueType } = this.getHashMapKeyValueTypes(mc.object);
+                    if (mName === "keys") {
+                        this.vecElemTypes.set(stmt.name.value, keyType);
+                    } else if (mName === "values") {
+                        this.vecElemTypes.set(stmt.name.value, valueType);
+                    }
+                }
+            }
+
             const valReg = this.emitExpression(stmt.value!);
+
+            // Post-emission: track map output elem type (set during emitVecMethodCall)
+            if (stmt.value instanceof AST.MethodCallExpression) {
+                const mc = stmt.value as AST.MethodCallExpression;
+                if (mc.method.value === "map" && this.isVecType(this.getExpressionType(mc.object))) {
+                    this.vecElemTypes.set(stmt.name.value, this.lastMapOutputElemType);
+                }
+            }
+
             const varReg = `%${stmt.name.value}.addr`;
             this.output += `  ${varReg} = alloca ${type}\n`;
             this.output += `  store ${type} ${valReg}, ${type}* ${varReg}\n`;
@@ -1077,8 +1124,20 @@ export class LLVMEmitter {
     }
 
     private emitForStatement(stmt: AST.ForStatement) {
-        if (!(stmt.iterable instanceof AST.RangeExpression)) return;
+        if (stmt.iterable instanceof AST.RangeExpression) {
+            this.emitRangeForLoop(stmt);
+        } else {
+            // Collection iteration
+            const iterableType = this.getExpressionType(stmt.iterable);
+            if (this.isVecType(iterableType)) {
+                this.emitVecForLoop(stmt);
+            } else if (this.isHashMapType(iterableType)) {
+                this.emitHashMapForLoop(stmt);
+            }
+        }
+    }
 
+    private emitRangeForLoop(stmt: AST.ForStatement) {
         const range = stmt.iterable as AST.RangeExpression;
         const varName = stmt.variable.value;
         const labelId = this.labelCounter++;
@@ -1117,6 +1176,135 @@ export class LLVMEmitter {
         const incReg = this.nextRegister();
         this.output += `  ${incReg} = add i32 ${loadReg}, 1\n`;
         this.output += `  store i32 ${incReg}, i32* ${varAddr}\n`;
+
+        // Branch back to condition
+        this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+    }
+
+    private emitVecForLoop(stmt: AST.ForStatement) {
+        const varName = stmt.variable.value;
+        const vecStructType = this.getVecStructType();
+        const elemType = this.getVecElemType(stmt.iterable);
+        const labelId = this.labelCounter++;
+        const condLabel = `forvec_cond_${labelId}`;
+        const bodyLabel = `forvec_body_${labelId}`;
+        const endLabel = `forvec_end_${labelId}`;
+
+        // Get Vec alloca address
+        let selfPtr: string;
+        if (stmt.iterable instanceof AST.Identifier) {
+            const addr = this.locals.get(stmt.iterable.value);
+            if (addr) {
+                selfPtr = addr;
+            } else {
+                selfPtr = this.emitExpression(stmt.iterable);
+            }
+        } else {
+            selfPtr = this.emitExpression(stmt.iterable);
+        }
+
+        // Get length once before the loop
+        const lenReg = this.nextRegister();
+        this.output += `  ${lenReg} = call i32 @fs_vec_len(${vecStructType}* ${selfPtr})\n`;
+
+        // Allocate index counter, init to 0
+        const idxAddr = `%__forvec_idx_${labelId}`;
+        this.output += `  ${idxAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${idxAddr}\n`;
+
+        // Allocate loop variable
+        const varAddr = `%${varName}.addr`;
+        this.output += `  ${varAddr} = alloca ${elemType}\n`;
+        this.locals.set(varName, varAddr);
+        this.localTypes.set(varName, elemType);
+
+        // Condition: idx < len
+        this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+        const curIdx = this.nextRegister();
+        this.output += `  ${curIdx} = load i32, i32* ${idxAddr}\n`;
+        const cmpReg = this.nextRegister();
+        this.output += `  ${cmpReg} = icmp slt i32 ${curIdx}, ${lenReg}\n`;
+        this.output += `  br i1 ${cmpReg}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
+
+        // Body: get element from Vec, store to loop variable
+        this.pushRcScope();
+        const rawPtr = this.nextRegister();
+        this.output += `  ${rawPtr} = call i8* @fs_vec_get(${vecStructType}* ${selfPtr}, i32 ${curIdx})\n`;
+        const castPtr = this.nextRegister();
+        this.output += `  ${castPtr} = bitcast i8* ${rawPtr} to ${elemType}*\n`;
+        const elemVal = this.nextRegister();
+        this.output += `  ${elemVal} = load ${elemType}, ${elemType}* ${castPtr}\n`;
+        this.output += `  store ${elemType} ${elemVal}, ${elemType}* ${varAddr}\n`;
+
+        // Emit body statements
+        stmt.body.statements.forEach(s => this.emitStatement(s));
+        this.emitScopeRelease();
+        this.popRcScope();
+
+        // Increment index
+        const loadIdx = this.nextRegister();
+        this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
+        const incIdx = this.nextRegister();
+        this.output += `  ${incIdx} = add i32 ${loadIdx}, 1\n`;
+        this.output += `  store i32 ${incIdx}, i32* ${idxAddr}\n`;
+
+        // Branch back to condition
+        this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+    }
+
+    private emitHashMapForLoop(stmt: AST.ForStatement) {
+        const varName = stmt.variable.value;
+        const hmStructType = this.getHashMapStructType();
+        const { keyType } = this.getHashMapKeyValueTypes(stmt.iterable);
+        const labelId = this.labelCounter++;
+        const condLabel = `forhm_cond_${labelId}`;
+        const bodyLabel = `forhm_body_${labelId}`;
+        const endLabel = `forhm_end_${labelId}`;
+
+        // Get HashMap alloca address
+        let selfPtr: string;
+        if (stmt.iterable instanceof AST.Identifier) {
+            const addr = this.locals.get(stmt.iterable.value);
+            if (addr) {
+                selfPtr = addr;
+            } else {
+                selfPtr = this.emitExpression(stmt.iterable);
+            }
+        } else {
+            selfPtr = this.emitExpression(stmt.iterable);
+        }
+
+        // Allocate cursor (i32), init to 0
+        const cursorAddr = `%__forhm_cursor_${labelId}`;
+        this.output += `  ${cursorAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${cursorAddr}\n`;
+
+        // Allocate loop variable
+        const varAddr = `%${varName}.addr`;
+        this.output += `  ${varAddr} = alloca ${keyType}\n`;
+        this.locals.set(varName, varAddr);
+        this.localTypes.set(varName, keyType);
+
+        // Condition: call fs_hashmap_iter_next, check for null
+        this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+        const rawKeyPtr = this.nextRegister();
+        this.output += `  ${rawKeyPtr} = call i8* @fs_hashmap_iter_next(${hmStructType}* ${selfPtr}, i32* ${cursorAddr})\n`;
+        const isNull = this.nextRegister();
+        this.output += `  ${isNull} = icmp eq i8* ${rawKeyPtr}, null\n`;
+        this.output += `  br i1 ${isNull}, label %${endLabel}, label %${bodyLabel}\n${bodyLabel}:\n`;
+
+        // Body: bitcast raw key pointer to keyType*, load into loop variable
+        this.pushRcScope();
+        const castPtr = this.nextRegister();
+        this.output += `  ${castPtr} = bitcast i8* ${rawKeyPtr} to ${keyType}*\n`;
+        const keyVal = this.nextRegister();
+        this.output += `  ${keyVal} = load ${keyType}, ${keyType}* ${castPtr}\n`;
+        this.output += `  store ${keyType} ${keyVal}, ${keyType}* ${varAddr}\n`;
+
+        // Emit body statements
+        stmt.body.statements.forEach(s => this.emitStatement(s));
+        this.emitScopeRelease();
+        this.popRcScope();
 
         // Branch back to condition
         this.output += `  br label %${condLabel}\n${endLabel}:\n`;
@@ -1201,7 +1389,7 @@ export class LLVMEmitter {
             return t.endsWith("*") ? t.slice(0, -1) : "i32";
         }
         if (expr instanceof AST.InfixExpression) {
-             if (["==","!=","<",">","<=",">="].includes(expr.operator)) return "i1";
+             if (["==","!=","<",">","<=",">=","&&","||"].includes(expr.operator)) return "i1";
              const lt = this.getExpressionType(expr.left);
              // Pointer arithmetic returns same pointer type
              if ((expr.operator === "+" || expr.operator === "-") && lt.endsWith("*")) return lt;
@@ -1426,6 +1614,16 @@ export class LLVMEmitter {
                 const cmpType = leftType.endsWith("*") ? leftType : (rightType.endsWith("*") ? rightType : leftType);
                 const cmpOp = expr.operator === "==" ? "eq" : expr.operator === "!=" ? "ne" : expr.operator === "<" ? "slt" : expr.operator === ">" ? "sgt" : expr.operator === "<=" ? "sle" : "sge";
                 this.output += `  ${reg} = icmp ${cmpOp} ${cmpType} ${left}, ${right}\n`;
+                return reg;
+            }
+
+            // Logical operators — operate on i1 (bool)
+            if (expr.operator === "&&") {
+                this.output += `  ${reg} = and i1 ${left}, ${right}\n`;
+                return reg;
+            }
+            if (expr.operator === "||") {
+                this.output += `  ${reg} = or i1 ${left}, ${right}\n`;
                 return reg;
             }
 
@@ -2836,6 +3034,185 @@ export class LLVMEmitter {
             return reg;
         }
 
+        if (methodName === "map") {
+            // vec.map(closure) — eager: creates a new Vec with transformed elements
+            const closureVal = this.emitExpression(expr.arguments[0]);
+            const closureAddr = this.nextRegister();
+            this.output += `  ${closureAddr} = alloca { i8*, i8* }\n`;
+            this.output += `  store { i8*, i8* } ${closureVal}, { i8*, i8* }* ${closureAddr}\n`;
+
+            // Determine output element type from closure
+            let outputElemType = elemType; // default: same as input
+            const closureExpr = expr.arguments[0];
+            if (closureExpr instanceof AST.ClosureExpression && closureExpr.returnType) {
+                outputElemType = this.mapType(closureExpr.returnType);
+            }
+            this.lastMapOutputElemType = outputElemType;
+
+            const outputElemSize = this.sizeOfLLVMType(outputElemType);
+
+            // Create new result Vec
+            const newVecReg = this.nextRegister();
+            this.output += `  ${newVecReg} = call ${vecStructType} @fs_vec_new(i32 ${outputElemSize})\n`;
+            const newVecAddr = this.nextRegister();
+            this.output += `  ${newVecAddr} = alloca ${vecStructType}\n`;
+            this.output += `  store ${vecStructType} ${newVecReg}, ${vecStructType}* ${newVecAddr}\n`;
+
+            // Get source length
+            const lenReg = this.nextRegister();
+            this.output += `  ${lenReg} = call i32 @fs_vec_len(${vecStructType}* ${selfPtr})\n`;
+
+            // Loop: idx from 0 to len
+            const labelId = this.labelCounter++;
+            const condLabel = `map_cond_${labelId}`;
+            const bodyLabel = `map_body_${labelId}`;
+            const endLabel = `map_end_${labelId}`;
+
+            const idxAddr = this.nextRegister();
+            this.output += `  ${idxAddr} = alloca i32\n`;
+            this.output += `  store i32 0, i32* ${idxAddr}\n`;
+
+            this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+            const curIdx = this.nextRegister();
+            this.output += `  ${curIdx} = load i32, i32* ${idxAddr}\n`;
+            const cmp = this.nextRegister();
+            this.output += `  ${cmp} = icmp slt i32 ${curIdx}, ${lenReg}\n`;
+            this.output += `  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
+
+            // Get element from source
+            const rawElem = this.nextRegister();
+            this.output += `  ${rawElem} = call i8* @fs_vec_get(${vecStructType}* ${selfPtr}, i32 ${curIdx})\n`;
+            const castElem = this.nextRegister();
+            this.output += `  ${castElem} = bitcast i8* ${rawElem} to ${elemType}*\n`;
+            const elemVal = this.nextRegister();
+            this.output += `  ${elemVal} = load ${elemType}, ${elemType}* ${castElem}\n`;
+
+            // Call closure: extract env + fn from fat pointer, invoke
+            const closureLoad = this.nextRegister();
+            this.output += `  ${closureLoad} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+            const envPtr = this.nextRegister();
+            this.output += `  ${envPtr} = extractvalue { i8*, i8* } ${closureLoad}, 0\n`;
+            const fnPtr = this.nextRegister();
+            this.output += `  ${fnPtr} = extractvalue { i8*, i8* } ${closureLoad}, 1\n`;
+            const typedFn = this.nextRegister();
+            this.output += `  ${typedFn} = bitcast i8* ${fnPtr} to ${outputElemType} (i8*, ${elemType})*\n`;
+            const resultVal = this.nextRegister();
+            this.output += `  ${resultVal} = call ${outputElemType} ${typedFn}(i8* ${envPtr}, ${elemType} ${elemVal})\n`;
+
+            // Push result into new Vec
+            const tmpResult = this.nextRegister();
+            this.output += `  ${tmpResult} = alloca ${outputElemType}\n`;
+            this.output += `  store ${outputElemType} ${resultVal}, ${outputElemType}* ${tmpResult}\n`;
+            const castResult = this.nextRegister();
+            this.output += `  ${castResult} = bitcast ${outputElemType}* ${tmpResult} to i8*\n`;
+            this.output += `  call void @fs_vec_push(${vecStructType}* ${newVecAddr}, i8* ${castResult})\n`;
+
+            // Increment index
+            const loadIdx = this.nextRegister();
+            this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
+            const incIdx = this.nextRegister();
+            this.output += `  ${incIdx} = add i32 ${loadIdx}, 1\n`;
+            this.output += `  store i32 ${incIdx}, i32* ${idxAddr}\n`;
+            this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+
+            // Return the new Vec
+            const resultVec = this.nextRegister();
+            this.output += `  ${resultVec} = load ${vecStructType}, ${vecStructType}* ${newVecAddr}\n`;
+            return resultVec;
+        }
+
+        if (methodName === "filter") {
+            // vec.filter(closure) — eager: creates a new Vec with elements passing the predicate
+            const closureVal = this.emitExpression(expr.arguments[0]);
+            const closureAddr = this.nextRegister();
+            this.output += `  ${closureAddr} = alloca { i8*, i8* }\n`;
+            this.output += `  store { i8*, i8* } ${closureVal}, { i8*, i8* }* ${closureAddr}\n`;
+
+            const elemSize = this.sizeOfLLVMType(elemType);
+
+            // Create new result Vec (same elem type)
+            const newVecReg = this.nextRegister();
+            this.output += `  ${newVecReg} = call ${vecStructType} @fs_vec_new(i32 ${elemSize})\n`;
+            const newVecAddr = this.nextRegister();
+            this.output += `  ${newVecAddr} = alloca ${vecStructType}\n`;
+            this.output += `  store ${vecStructType} ${newVecReg}, ${vecStructType}* ${newVecAddr}\n`;
+
+            // Get source length
+            const lenReg = this.nextRegister();
+            this.output += `  ${lenReg} = call i32 @fs_vec_len(${vecStructType}* ${selfPtr})\n`;
+
+            // Index loop
+            const labelId = this.labelCounter++;
+            const condLabel = `filter_cond_${labelId}`;
+            const bodyLabel = `filter_body_${labelId}`;
+            const pushLabel = `filter_push_${labelId}`;
+            const nextLabel = `filter_next_${labelId}`;
+            const endLabel = `filter_end_${labelId}`;
+
+            const idxAddr = this.nextRegister();
+            this.output += `  ${idxAddr} = alloca i32\n`;
+            this.output += `  store i32 0, i32* ${idxAddr}\n`;
+
+            this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+            const curIdx = this.nextRegister();
+            this.output += `  ${curIdx} = load i32, i32* ${idxAddr}\n`;
+            const cmp = this.nextRegister();
+            this.output += `  ${cmp} = icmp slt i32 ${curIdx}, ${lenReg}\n`;
+            this.output += `  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
+
+            // Get element
+            const rawElem = this.nextRegister();
+            this.output += `  ${rawElem} = call i8* @fs_vec_get(${vecStructType}* ${selfPtr}, i32 ${curIdx})\n`;
+            const castElem = this.nextRegister();
+            this.output += `  ${castElem} = bitcast i8* ${rawElem} to ${elemType}*\n`;
+            const elemVal = this.nextRegister();
+            this.output += `  ${elemVal} = load ${elemType}, ${elemType}* ${castElem}\n`;
+
+            // Call closure predicate
+            const closureLoad = this.nextRegister();
+            this.output += `  ${closureLoad} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+            const envPtr = this.nextRegister();
+            this.output += `  ${envPtr} = extractvalue { i8*, i8* } ${closureLoad}, 0\n`;
+            const fnPtr = this.nextRegister();
+            this.output += `  ${fnPtr} = extractvalue { i8*, i8* } ${closureLoad}, 1\n`;
+            // Filter closure returns i1 (bool)
+            const typedFn = this.nextRegister();
+            this.output += `  ${typedFn} = bitcast i8* ${fnPtr} to i1 (i8*, ${elemType})*\n`;
+            const predResult = this.nextRegister();
+            this.output += `  ${predResult} = call i1 ${typedFn}(i8* ${envPtr}, ${elemType} ${elemVal})\n`;
+
+            // Conditional push
+            this.output += `  br i1 ${predResult}, label %${pushLabel}, label %${nextLabel}\n${pushLabel}:\n`;
+
+            const tmpElem = this.nextRegister();
+            this.output += `  ${tmpElem} = alloca ${elemType}\n`;
+            this.output += `  store ${elemType} ${elemVal}, ${elemType}* ${tmpElem}\n`;
+            const castTmp = this.nextRegister();
+            this.output += `  ${castTmp} = bitcast ${elemType}* ${tmpElem} to i8*\n`;
+            this.output += `  call void @fs_vec_push(${vecStructType}* ${newVecAddr}, i8* ${castTmp})\n`;
+            this.output += `  br label %${nextLabel}\n${nextLabel}:\n`;
+
+            // Increment + loop
+            const loadIdx = this.nextRegister();
+            this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
+            const incIdx = this.nextRegister();
+            this.output += `  ${incIdx} = add i32 ${loadIdx}, 1\n`;
+            this.output += `  store i32 ${incIdx}, i32* ${idxAddr}\n`;
+            this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+
+            // Return new Vec
+            const resultVec = this.nextRegister();
+            this.output += `  ${resultVec} = load ${vecStructType}, ${vecStructType}* ${newVecAddr}\n`;
+            return resultVec;
+        }
+
+        if (methodName === "collect") {
+            // Eager operations already return Vecs, so collect is identity
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = load ${vecStructType}, ${vecStructType}* ${selfPtr}\n`;
+            return reg;
+        }
+
         return "0";
     }
 
@@ -2936,6 +3313,86 @@ export class LLVMEmitter {
             return reg;
         }
 
+        if (methodName === "keys") {
+            // Create a new Vec<keyType>, iterate all occupied entries, push keys
+            const vecStructType = this.getVecStructType();
+            const keySize = this.sizeOfLLVMType(keyType);
+
+            // New Vec for keys
+            const newVecReg = this.nextRegister();
+            this.output += `  ${newVecReg} = call ${vecStructType} @fs_vec_new(i32 ${keySize})\n`;
+            const newVecAddr = this.nextRegister();
+            this.output += `  ${newVecAddr} = alloca ${vecStructType}\n`;
+            this.output += `  store ${vecStructType} ${newVecReg}, ${vecStructType}* ${newVecAddr}\n`;
+
+            // Cursor
+            const labelId = this.labelCounter++;
+            const condLabel = `keys_cond_${labelId}`;
+            const bodyLabel = `keys_body_${labelId}`;
+            const endLabel = `keys_end_${labelId}`;
+
+            const cursorAddr = this.nextRegister();
+            this.output += `  ${cursorAddr} = alloca i32\n`;
+            this.output += `  store i32 0, i32* ${cursorAddr}\n`;
+
+            // Loop
+            this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+            const rawKeyPtr = this.nextRegister();
+            this.output += `  ${rawKeyPtr} = call i8* @fs_hashmap_iter_next(${hmStructType}* ${selfPtr}, i32* ${cursorAddr})\n`;
+            const isNull = this.nextRegister();
+            this.output += `  ${isNull} = icmp eq i8* ${rawKeyPtr}, null\n`;
+            this.output += `  br i1 ${isNull}, label %${endLabel}, label %${bodyLabel}\n${bodyLabel}:\n`;
+
+            // Push key into Vec
+            this.output += `  call void @fs_vec_push(${vecStructType}* ${newVecAddr}, i8* ${rawKeyPtr})\n`;
+            this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+
+            // Return Vec
+            const resultVec = this.nextRegister();
+            this.output += `  ${resultVec} = load ${vecStructType}, ${vecStructType}* ${newVecAddr}\n`;
+            return resultVec;
+        }
+
+        if (methodName === "values") {
+            // Create a new Vec<valueType>, iterate all occupied entries, push values
+            const vecStructType = this.getVecStructType();
+            const valSize = this.sizeOfLLVMType(valueType);
+            const keySize = this.sizeOfLLVMType(keyType);
+
+            // New Vec for values
+            const newVecReg = this.nextRegister();
+            this.output += `  ${newVecReg} = call ${vecStructType} @fs_vec_new(i32 ${valSize})\n`;
+            const newVecAddr = this.nextRegister();
+            this.output += `  ${newVecAddr} = alloca ${vecStructType}\n`;
+            this.output += `  store ${vecStructType} ${newVecReg}, ${vecStructType}* ${newVecAddr}\n`;
+
+            const labelId = this.labelCounter++;
+            const condLabel = `vals_cond_${labelId}`;
+            const bodyLabel = `vals_body_${labelId}`;
+            const endLabel = `vals_end_${labelId}`;
+
+            const cursorAddr = this.nextRegister();
+            this.output += `  ${cursorAddr} = alloca i32\n`;
+            this.output += `  store i32 0, i32* ${cursorAddr}\n`;
+
+            this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+            const rawKeyPtr = this.nextRegister();
+            this.output += `  ${rawKeyPtr} = call i8* @fs_hashmap_iter_next(${hmStructType}* ${selfPtr}, i32* ${cursorAddr})\n`;
+            const isNull = this.nextRegister();
+            this.output += `  ${isNull} = icmp eq i8* ${rawKeyPtr}, null\n`;
+            this.output += `  br i1 ${isNull}, label %${endLabel}, label %${bodyLabel}\n${bodyLabel}:\n`;
+
+            // Advance pointer from key to value: rawKeyPtr + key_size
+            const valPtr = this.nextRegister();
+            this.output += `  ${valPtr} = getelementptr i8, i8* ${rawKeyPtr}, i32 ${keySize}\n`;
+            this.output += `  call void @fs_vec_push(${vecStructType}* ${newVecAddr}, i8* ${valPtr})\n`;
+            this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+
+            const resultVec = this.nextRegister();
+            this.output += `  ${resultVec} = load ${vecStructType}, ${vecStructType}* ${newVecAddr}\n`;
+            return resultVec;
+        }
+
         return "0";
     }
 
@@ -2968,6 +3425,7 @@ export class LLVMEmitter {
             const elemType = this.getVecElemType(expr.object);
             if (methodName === "get" || methodName === "pop") return elemType;
             if (methodName === "len") return "i32";
+            if (methodName === "map" || methodName === "filter" || methodName === "collect") return this.getVecStructType();
             return "void";
         }
 
@@ -2977,6 +3435,7 @@ export class LLVMEmitter {
             if (methodName === "get") return valueType;
             if (methodName === "len") return "i32";
             if (methodName === "contains_key") return "i32";
+            if (methodName === "keys" || methodName === "values") return this.getVecStructType();
             return "void";
         }
 

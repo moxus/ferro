@@ -5,7 +5,7 @@ export interface EnumVariantInfo {
 }
 
 export type Type =
-    | { kind: "primitive", name: "int" | "string" | "bool" | "void" | "any" | "i8" | "null" }
+    | { kind: "primitive", name: "int" | "string" | "bool" | "void" | "any" | "i8" | "null" | "File" }
     | { kind: "pointer", elementType: Type }
     | { kind: "function", params: Type[], returnType: Type }
     | { kind: "result", ok: Type, err: Type }
@@ -22,6 +22,7 @@ export const VoidType: Type = { kind: "primitive", name: "void" };
 export const AnyType: Type = { kind: "primitive", name: "any" };
 export const I8Type: Type = { kind: "primitive", name: "i8" };
 export const NullType: Type = { kind: "primitive", name: "null" };
+export const FileType: Type = { kind: "primitive", name: "File" };
 export const UnknownType: Type = { kind: "unknown" };
 
 export function typesEqual(a: Type, b: Type): boolean {

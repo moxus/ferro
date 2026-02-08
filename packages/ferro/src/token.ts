@@ -63,6 +63,8 @@ export enum TokenType {
   Dollar = "DOLLAR",   // $
   Bang = "BANG",       // !
   Ampersand = "AMPERSAND", // &
+  AmpAmp = "AMPAMP",       // &&
+  PipePipe = "PIPEPIPE",   // ||
   DotDot = "DOTDOT",       // ..
   DotDotDot = "DOTDOTDOT", // ...
 
