@@ -559,9 +559,13 @@ export class Analyzer {
                 if (methodName === "contains_key") return BoolType;
                 if (methodName === "keys") return { kind: "generic_inst", name: "Vec", args: [keyType] };
                 if (methodName === "values") return { kind: "generic_inst", name: "Vec", args: [valueType] };
-                // iter() returns lazy Iterator over keys
-                if (methodName === "iter") {
+                // iter() / keys_iter() returns lazy Iterator over keys
+                if (methodName === "iter" || methodName === "keys_iter") {
                     return { kind: "generic_inst", name: "Iterator", args: [keyType] };
+                }
+                // values_iter() returns lazy Iterator over values
+                if (methodName === "values_iter") {
+                    return { kind: "generic_inst", name: "Iterator", args: [valueType] };
                 }
                 return UnknownType;
             }

@@ -1,0 +1,75 @@
+// HashMap values_iter() — lazy iterator over values
+
+let mut m = HashMap::<int, int>::new();
+m.insert(1, 10);
+m.insert(2, 20);
+m.insert(3, 30);
+
+// Test 1: values_iter().collect() — collect all values
+let vals = m.values_iter().collect();
+let mut s1: int = 0;
+for (v in vals) {
+    s1 = s1 + v;
+}
+print(s1);
+// Expected: 60
+
+// Test 2: values_iter().map(f).collect() — double all values
+let doubled = m.values_iter().map((x: int) -> int { x * 2 }).collect();
+let mut s2: int = 0;
+for (v in doubled) {
+    s2 = s2 + v;
+}
+print(s2);
+// Expected: 120
+
+// Test 3: values_iter().filter(f).collect() — keep values > 15
+let big = m.values_iter().filter((x: int) -> bool { x > 15 }).collect();
+print(big.len());
+// Expected: 2
+
+// Test 4: values_iter().map(f).filter(g).collect() — chained
+let result = m.values_iter().map((x: int) -> int { x * 3 }).filter((x: int) -> bool { x > 50 }).collect();
+let mut s3: int = 0;
+for (v in result) {
+    s3 = s3 + v;
+}
+print(s3);
+// Expected: 60 + 90 = 150
+
+// Test 5: values_iter().count()
+let c = m.values_iter().count();
+print(c);
+// Expected: 3
+
+// Test 6: values_iter().filter(f).count()
+let c2 = m.values_iter().filter((x: int) -> bool { x > 15 }).count();
+print(c2);
+// Expected: 2
+
+// Test 7: values_iter().sum()
+let total = m.values_iter().sum();
+print(total);
+// Expected: 60
+
+// Test 8: values_iter().map(f).sum()
+let doubled_sum = m.values_iter().map((x: int) -> int { x * 10 }).sum();
+print(doubled_sum);
+// Expected: 600
+
+// Test 9: for (v in values_iter().filter(f))
+let mut s4: int = 0;
+for (v in m.values_iter().filter((x: int) -> bool { x > 15 })) {
+    s4 = s4 + v;
+}
+print(s4);
+// Expected: 50
+
+// Test 10: values().iter() pattern (alternative syntax)
+let vals2 = m.values().iter().map((x: int) -> int { x + 1 }).collect();
+let mut s5: int = 0;
+for (v in vals2) {
+    s5 = s5 + v;
+}
+print(s5);
+// Expected: 11 + 21 + 31 = 63
