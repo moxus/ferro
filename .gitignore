@@ -22,6 +22,7 @@ js_test.ts
 js_test.js
 macro_test.js
 macro_test.ts
+packages/ferro/tests/*.ts
 
 # OS files
 .DS_Store
