@@ -245,6 +245,18 @@
 
 ---
 
+### 27. Heap-Allocated Environments & Mutable Capture
+- [x] **Heap-Allocated Environments**: Closure environment structs are now allocated on the heap with `malloc` instead of `alloca`. This makes closures safe to return from functions, store in variables, and pass to data structures that outlive the creation scope.
+- [x] **Escaping Closures**: Functions can return closures that capture outer variables. E.g., `fn make_adder(n: int) -> (int) -> int { (x: int) -> int { x + n } }` — the returned closure safely holds `n` on the heap.
+- [x] **Mutable Capture by Reference**: Variables declared `let mut` are captured by reference (pointer stored in env). Mutations inside the closure are visible in the outer scope and vice versa. E.g., `let mut count = 0; let inc = { count = count + 1 }; inc(); print(count); // 1`.
+- [x] **Mutability Tracking in LLVM Emitter**: Added `localMutable` set to track which variables are mutable. Properly saved/restored across closure lifting to avoid state leakage.
+- [x] **Environment Struct Layout**: Immutable captures store values (`T`), mutable captures store pointers (`T*`). The lifted closure function unpacks mutable captures by loading the pointer and using it directly as an alias to the outer variable.
+- [x] **RC Compatibility**: String captures are properly retained/released. Mutable captures alias the outer scope (no extra retain needed).
+- [x] **malloc/free Declarations**: Added `malloc` and `free` declarations to the LLVM preamble for both standalone and runtime-hosted compilation modes.
+- [x] **Test Coverage**: Native integration test (`closure_escape_test.fe`) covering escaping closures, multiple captures, mutable capture, and stored closures called multiple times.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -265,7 +277,7 @@
 
 ### 3. Language Features & Backends
 - **FFI Enhancements**: More robust handling of foreign function interfaces and platform-specific ABI considerations.
-- **Closures / First-Class Functions**: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. ~~Bidirectional type inference for untyped trailing lambda params~~ — **Completed (see §26)**. Remaining: heap-allocated environments for escaping closures, mutable capture by reference.
+- ~~**Closures / First-Class Functions**~~: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. ~~Bidirectional type inference for untyped trailing lambda params~~ — **Completed (see §26)**. ~~Heap-allocated environments for escaping closures, mutable capture by reference~~ — **Completed (see §27)**.
 - **Iterator Protocol**: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. Remaining: user-defined `IntoIterator` trait, iterator combinators on HashMap, lazy iterator chains.
 - ~~**Error Messages with Source Locations**~~: **Completed (see §25)**.
 

@@ -1,0 +1,56 @@
+// Test: Escaping closures (returned from functions) and mutable capture
+
+// --- Test 1: Escaping closure - function returns a closure ---
+fn make_adder(n: int) -> (int) -> int {
+    (x: int) -> int { x + n }
+}
+
+let add5 = make_adder(5);
+let add10 = make_adder(10);
+print(add5(3));
+// Expected: 8
+print(add10(3));
+// Expected: 13
+
+// --- Test 2: Escaping closure with multiple captures ---
+fn make_linear(a: int, b: int) -> (int) -> int {
+    (x: int) -> int { a * x + b }
+}
+
+let f = make_linear(2, 3);
+print(f(5));
+// Expected: 13  (2*5 + 3)
+print(f(10));
+// Expected: 23  (2*10 + 3)
+
+// --- Test 3: Mutable capture by reference ---
+let mut count: int = 0;
+let inc = (x: int) -> int {
+    count = count + x;
+    count
+};
+inc(1);
+inc(2);
+print(count);
+// Expected: 3
+
+// --- Test 4: Multiple calls with mutable capture ---
+let mut total: int = 0;
+let accumulate = (x: int) -> int {
+    total = total + x;
+    total
+};
+print(accumulate(10));
+// Expected: 10
+print(accumulate(20));
+// Expected: 30
+print(total);
+// Expected: 30
+
+// --- Test 5: Closure stored in variable, called multiple times ---
+let multiplier: int = 7;
+let mul = (x: int) -> int { x * multiplier };
+print(mul(3));
+// Expected: 21
+print(mul(6));
+// Expected: 42

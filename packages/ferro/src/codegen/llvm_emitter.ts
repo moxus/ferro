@@ -79,6 +79,9 @@ export class LLVMEmitter {
     // Tracks the output element type of the last emitted Vec.map() call for type propagation
     private lastMapOutputElemType: string = "i32";
 
+    // Track which local variables are mutable (for mutable capture by reference)
+    private localMutable: Set<string> = new Set();
+
     // Reference Counting support
     // Stack of scope frames: each frame tracks RC variable names defined in that scope
     private rcScopeStack: Set<string>[] = [];
@@ -681,6 +684,8 @@ export class LLVMEmitter {
             this.output += `declare i32 @fs_file_seek(%File*, i64, i32)\n`;
             this.output += `declare i64 @fs_file_tell(%File*)\n`;
             this.output += `declare i32 @printf(i8*, ...)\n`;
+            this.output += `declare i8* @malloc(i32)\n`;
+            this.output += `declare void @free(i8*)\n`;
             this.declaredExterns.add("printf");
             this.variadicExterns.add("printf");
             this.functionParamTypes.set("printf", ["i8*"]);
@@ -698,6 +703,7 @@ export class LLVMEmitter {
                 }
             }
         }
+
     }
 
     private emitStructDefinition(node: AST.StructDefinition) {
@@ -1066,6 +1072,7 @@ export class LLVMEmitter {
             this.output += `  store ${type} ${valReg}, ${type}* ${varReg}\n`;
             this.locals.set(stmt.name.value, varReg);
             this.localTypes.set(stmt.name.value, type);
+            if (stmt.mutable) this.localMutable.add(stmt.name.value);
 
             // RC: track this variable and retain if it's a copy of another RC value
             if (this.isRcType(type)) {
@@ -2413,13 +2420,14 @@ export class LLVMEmitter {
         const closureId = this.closureCounter++;
         const closureFnName = `__closure_${closureId}`;
 
-        // --- Determine captures ---
-        const captures: { name: string, llvmType: string, addr: string }[] = [];
+        // --- Determine captures with mutability info ---
+        const captures: { name: string, llvmType: string, addr: string, isMutable: boolean }[] = [];
         for (const varName of expr.capturedVariables) {
             const llvmType = this.localTypes.get(varName) || "i32";
             const addr = this.locals.get(varName);
             if (addr) {
-                captures.push({ name: varName, llvmType, addr });
+                const isMutable = this.localMutable.has(varName);
+                captures.push({ name: varName, llvmType, addr, isMutable });
             }
         }
 
@@ -2429,7 +2437,6 @@ export class LLVMEmitter {
         const paramLLVMTypes: { name: string, llvmType: string }[] = [];
         for (const p of expr.parameters) {
             if (!p.type) {
-                // Analyzer should have patched this; fall back to i32 for safety
                 paramLLVMTypes.push({ name: p.name.value, llvmType: "i32" });
                 continue;
             }
@@ -2438,17 +2445,18 @@ export class LLVMEmitter {
         }
 
         // --- Determine return type ---
-        // After bidirectional inference the analyzer patches expr.returnType for
-        // trailing lambdas, so this branch handles most cases automatically.
         let retType = "void";
         if (expr.returnType) {
             retType = this.mapType(expr.returnType);
         }
 
-        // --- Compute the environment struct type ---
+        // --- Compute environment struct type ---
+        // Mutable captures store a pointer (T*) instead of a value (T) in the env
         let envStructType = "";
         if (captures.length > 0) {
-            const fieldTypes = captures.map(c => c.llvmType).join(", ");
+            const fieldTypes = captures.map(c =>
+                c.isMutable ? `${c.llvmType}*` : c.llvmType
+            ).join(", ");
             envStructType = `{ ${fieldTypes} }`;
         }
 
@@ -2456,6 +2464,7 @@ export class LLVMEmitter {
         const oldLocals = new Map(this.locals);
         const oldLocalTypes = new Map(this.localTypes);
         const oldLocalIsPtr = new Set(this.localIsPtr);
+        const oldLocalMutable = new Set(this.localMutable);
         const oldReg = this.registerCounter;
         const oldRcScopeStack = this.rcScopeStack;
         const oldDroppedVars = new Set(this.droppedVars);
@@ -2464,6 +2473,7 @@ export class LLVMEmitter {
 
         this.locals.clear();
         this.localIsPtr.clear();
+        this.localMutable.clear();
         this.registerCounter = 0;
         this.rcScopeStack = [];
         this.droppedVars.clear();
@@ -2492,13 +2502,21 @@ export class LLVMEmitter {
                 const gepReg = this.nextRegister();
                 this.output += `  ${gepReg} = getelementptr ${envStructType}, ${envStructType}* ${envPtrReg}, i32 0, i32 ${i}\n`;
 
-                if ((cap.llvmType.startsWith("%enum.") || cap.llvmType.startsWith("%struct.")) && !cap.llvmType.endsWith("*")) {
+                if (cap.isMutable) {
+                    // Mutable capture by reference: env stores T*, load the pointer
+                    // and use it directly as the variable's address (aliasing outer scope)
+                    const ptrReg = this.nextRegister();
+                    this.output += `  ${ptrReg} = load ${cap.llvmType}*, ${cap.llvmType}** ${gepReg}\n`;
+                    this.locals.set(cap.name, ptrReg);
+                    this.localTypes.set(cap.name, cap.llvmType);
+                    this.localMutable.add(cap.name);
+                } else if ((cap.llvmType.startsWith("%enum.") || cap.llvmType.startsWith("%struct.")) && !cap.llvmType.endsWith("*")) {
                     // Pointer-semantic: use the GEP result directly
                     this.locals.set(cap.name, gepReg);
                     this.localTypes.set(cap.name, cap.llvmType);
                     this.localIsPtr.add(cap.name);
                 } else {
-                    // Load the value and create a local alloca
+                    // Immutable capture by value: load and copy to local alloca
                     const loadReg = this.nextRegister();
                     this.output += `  ${loadReg} = load ${cap.llvmType}, ${cap.llvmType}* ${gepReg}\n`;
                     const addr = this.nextRegister();
@@ -2596,6 +2614,7 @@ export class LLVMEmitter {
         this.locals = oldLocals;
         this.localTypes = oldLocalTypes;
         this.localIsPtr = oldLocalIsPtr;
+        this.localMutable = oldLocalMutable;
         this.registerCounter = oldReg;
         this.rcScopeStack = oldRcScopeStack;
         this.droppedVars = oldDroppedVars;
@@ -2603,37 +2622,42 @@ export class LLVMEmitter {
 
         // --- At the call site: construct the fat pointer { i8*, i8* } ---
 
-        // Step A: Allocate and populate environment struct
+        // Step A: Heap-allocate and populate environment struct
         let envPtr = "null";
         if (captures.length > 0) {
-            const envAlloca = this.nextRegister();
-            this.output += `  ${envAlloca} = alloca ${envStructType}\n`;
+            // Compute environment struct size and heap-allocate with malloc
+            const envSize = this.computeEnvSize(captures);
+            const envRaw = this.nextRegister();
+            this.output += `  ${envRaw} = call i8* @malloc(i32 ${envSize})\n`;
+            const envTyped = this.nextRegister();
+            this.output += `  ${envTyped} = bitcast i8* ${envRaw} to ${envStructType}*\n`;
 
             captures.forEach((cap, i) => {
                 const gepReg = this.nextRegister();
-                this.output += `  ${gepReg} = getelementptr ${envStructType}, ${envStructType}* ${envAlloca}, i32 0, i32 ${i}\n`;
+                this.output += `  ${gepReg} = getelementptr ${envStructType}, ${envStructType}* ${envTyped}, i32 0, i32 ${i}\n`;
 
-                if (this.localIsPtr.has(cap.name)) {
+                if (cap.isMutable) {
+                    // Mutable capture: store pointer to the outer variable's alloca
+                    this.output += `  store ${cap.llvmType}* ${cap.addr}, ${cap.llvmType}** ${gepReg}\n`;
+                } else if (this.localIsPtr.has(cap.name)) {
                     // Struct/enum by-pointer: load struct value and store
                     const loadReg = this.nextRegister();
                     this.output += `  ${loadReg} = load ${cap.llvmType}, ${cap.llvmType}* ${cap.addr}\n`;
                     this.output += `  store ${cap.llvmType} ${loadReg}, ${cap.llvmType}* ${gepReg}\n`;
                 } else {
+                    // Immutable capture: copy value into env
                     const loadReg = this.nextRegister();
                     this.output += `  ${loadReg} = load ${cap.llvmType}, ${cap.llvmType}* ${cap.addr}\n`;
                     this.output += `  store ${cap.llvmType} ${loadReg}, ${cap.llvmType}* ${gepReg}\n`;
                 }
 
-                // RC retain for captured strings
-                if (this.isRcType(cap.llvmType)) {
+                // RC retain for captured strings (immutable only — mutable captures alias)
+                if (!cap.isMutable && this.isRcType(cap.llvmType)) {
                     this.emitRcRetainAddr(gepReg);
                 }
             });
 
-            // Bitcast env struct pointer to i8*
-            const envI8Ptr = this.nextRegister();
-            this.output += `  ${envI8Ptr} = bitcast ${envStructType}* ${envAlloca} to i8*\n`;
-            envPtr = envI8Ptr;
+            envPtr = envRaw;
         }
 
         // Step B: Bitcast function pointer to i8*
@@ -2656,6 +2680,20 @@ export class LLVMEmitter {
         const fatPtrVal = this.nextRegister();
         this.output += `  ${fatPtrVal} = load { i8*, i8* }, { i8*, i8* }* ${fatPtr}\n`;
         return fatPtrVal;
+    }
+
+    /** Compute heap allocation size for a closure environment struct. */
+    private computeEnvSize(captures: { name: string, llvmType: string, isMutable: boolean }[]): number {
+        let size = 0;
+        for (const cap of captures) {
+            if (cap.isMutable) {
+                size += 8; // pointer size
+            } else {
+                size += this.sizeOfLLVMType(cap.llvmType);
+            }
+        }
+        // Align to 8 bytes
+        return Math.max(size, 8);
     }
 
     private emitClosureCall(expr: AST.CallExpression): string {
