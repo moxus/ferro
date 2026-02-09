@@ -17,14 +17,14 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
-
-interface Point {
-  x: number;
-  y: number;
-}
-function test_member(p: any) {
-return ;
+const Summary = {
+  summarize: new Map()
 };
-function main() {
-const p: Point = { x: 10, y: 20 };
+Summary.summarize.set("number", function(self: any) {
+return self + 1;
+});
+function process<T>(x: T) {
+return x;
 };
+const result: int = process<number>(41);
+print(result);

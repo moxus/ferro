@@ -1,0 +1,27 @@
+// User-defined IntoIterator test
+
+struct IntRange {
+    start: int,
+    end: int,
+}
+
+trait IntoIterator {
+    fn into_iter(self: IntRange) -> Vec<int>;
+}
+
+impl IntoIterator for IntRange {
+    fn into_iter(self: IntRange) -> Vec<int> {
+        let mut v = Vec::<int>::new();
+        for (i in self.start..self.end) {
+            v.push(i);
+        }
+        return v;
+    }
+}
+
+let r: IntRange = IntRange { start: 0, end: 5 };
+let mut sum: int = 0;
+for (x in r) {
+    sum = sum + x;
+}
+print(sum);  // 0+1+2+3+4 = 10

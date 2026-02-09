@@ -17,14 +17,17 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
-
-interface Point {
-  x: number;
-  y: number;
+interface Counter {
+  count: number;
 }
-function test_member(p: any) {
-return ;
+const Ops = {
+  increment: new Map()
 };
-function main() {
-const p: Point = { x: 10, y: 20 };
-};
+Ops.increment.set("Counter", function(self: any) {
+return self.count + 1;
+});
+const c: Counter = { count: 10 };
+const v1: int = Ops.increment.get(_getType(c))(c);
+print(v1);
+const v2: int = c.increment();
+print(v2);

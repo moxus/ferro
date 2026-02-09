@@ -257,6 +257,45 @@
 
 ---
 
+### 28. Math Utilities (Standard Library)
+- [x] **Runtime Functions**: `fs_math_abs`, `fs_math_min`, `fs_math_max`, `fs_math_pow`, `fs_math_sqrt`, `fs_math_clamp` implemented in `runtime.fe` as pure Ferro functions.
+- [x] **`Math::abs(x)`**: Absolute value of integer.
+- [x] **`Math::min(a, b)` / `Math::max(a, b)`**: Minimum / maximum of two integers.
+- [x] **`Math::pow(base, exp)`**: Integer exponentiation. Returns 0 for negative exponents.
+- [x] **`Math::sqrt(x)`**: Integer square root (floor) via Newton's method.
+- [x] **`Math::clamp(x, lo, hi)`**: Clamp value to [lo, hi] range.
+- [x] **Analyzer**: `Math` recognized as a static receiver; all methods return `int`.
+- [x] **LLVM Backend**: `Math::method(args)` dispatches to `@fs_math_method(args)` runtime calls.
+- [x] **TypeScript Backend**: `Math::abs` → `Math.abs`, `Math::sqrt` → `Math.floor(Math.sqrt(...))`, `Math::clamp` → `Math.min(Math.max(...))`, etc.
+- [x] **Runtime Function Registry**: All 6 math functions added to `runtimeFnNames` for canonical name exemption.
+
+### 29. Lazy Iterator Chains (Compile-Time Fusion)
+- [x] **`vec.iter()` / `map.iter()`**: Returns `Iterator<T>` type in the analyzer. Acts as the entry point for lazy chains.
+- [x] **`iter.map(f)`**: Lazy map adapter — returns `Iterator<U>` where U is the closure return type.
+- [x] **`iter.filter(f)`**: Lazy filter adapter — returns `Iterator<T>` with predicate closure.
+- [x] **`iter.collect()`**: Terminal operation — materializes the lazy chain into a `Vec<T>`.
+- [x] **`iter.count()`**: Terminal operation — returns the number of elements passing all filters.
+- [x] **`iter.sum()`**: Terminal operation — returns the sum of all elements after map/filter.
+- [x] **`iter.for_each(f)`**: Terminal operation — calls closure on each passing element.
+- [x] **Compile-Time Chain Fusion**: The LLVM backend walks the AST chain backward (`collect` → `filter` → `map` → `iter` → source), collects all closures, and emits a single fused loop. Zero runtime overhead — no intermediate Iterator struct or allocation.
+- [x] **`for (x in iter_chain)`**: Iterator chains work as for-loop iterables. `for (x in vec.iter().filter(f).map(g))` fuses into a single loop with inline predicate/transform calls.
+- [x] **Vec + HashMap Sources**: Both Vec and HashMap sources are supported. HashMap chains iterate over keys via cursor-based `fs_hashmap_iter_next`.
+- [x] **Type Propagation**: Element types are tracked through chain steps — `map` updates the element type based on closure return type, `filter` preserves it.
+- [x] **Analyzer**: Full type inference for closure params in chain contexts. `vec.iter().map((x) { x * 2 })` infers `x: int` from `Vec<int>`.
+- [x] **TypeScript Backend**: `iter()` → identity, `map(f)` → `.map(f)`, `filter(f)` → `.filter(f)`, `collect()` → identity, `count()` → `.length`, `sum()` → `.reduce(...)`, `for_each(f)` → `.forEach(f)`.
+
+### 30. User-Defined IntoIterator
+- [x] **`IntoIterator` Trait**: Users can define `trait IntoIterator { fn into_iter(self: T) -> Vec<U>; }` and implement it for custom struct types.
+- [x] **`for (x in struct_val)`**: When iterating over a struct that implements `IntoIterator`, the compiler calls `into_iter()` to get a Vec and iterates that.
+- [x] **Analyzer**: `findIntoIteratorImpl()` looks up impl blocks to infer the element type from the `into_iter` return type (`Vec<T>` → `T`).
+- [x] **LLVM Backend**: `tryEmitIntoIteratorForLoop()` searches impl blocks, calls the impl method, stores the resulting Vec, and emits a standard Vec iteration loop.
+- [x] **TypeScript Backend**: Emits `IntoIterator.into_iter.get(_getType(obj))(obj)` trait dispatch for struct variables in for-loops.
+
+### 31. Parser Generic Type Fix
+- [x] **Generic Type Parsing**: Fixed infinite loop in `parseType()` when parsing generic types like `Vec<int>` in function return types. The parser now correctly advances past the last type parameter before checking for `>`.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -266,11 +305,12 @@
 ## 🛠 Planned Features
 
 ### 1. Standard Library & Runtime
-- **Standard Library Functions**: ~~File I/O~~, math utilities, and other common built-ins.
+- **Standard Library Functions**: ~~File I/O~~, ~~math utilities~~, and other common built-ins.
   - ✅ **File I/O**: Basic file operations implemented in `runtime.fe` with `fs_file_open`, `fs_file_close`, `fs_file_read`, `fs_file_write`, `fs_file_read_line`, `fs_file_write_string`, `fs_file_seek`, `fs_file_tell`
   - ✅ **File Type**: Added `File` primitive type to type system
   - ✅ **Runtime Integration**: Added file function declarations to LLVM emitter
-  - 🔄 **Remaining**: Higher-level abstractions, error handling, built-in functions for file operations
+  - ✅ **Math Utilities**: `abs`, `min`, `max`, `pow`, `sqrt`, `clamp` — **Completed (see §28)**
+  - 🔄 **Remaining**: Higher-level abstractions, error handling
 
 ### 2. Low Priority
 - **Cycle Detection**: Optional weak references or cycle-collector for complex data structures with reference cycles.
@@ -278,7 +318,7 @@
 ### 3. Language Features & Backends
 - **FFI Enhancements**: More robust handling of foreign function interfaces and platform-specific ABI considerations.
 - ~~**Closures / First-Class Functions**~~: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. ~~Bidirectional type inference for untyped trailing lambda params~~ — **Completed (see §26)**. ~~Heap-allocated environments for escaping closures, mutable capture by reference~~ — **Completed (see §27)**.
-- **Iterator Protocol**: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. Remaining: user-defined `IntoIterator` trait, iterator combinators on HashMap, lazy iterator chains.
+- **Iterator Protocol**: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. ~~Lazy iterator chains~~ — **Completed (see §29)**. ~~User-defined `IntoIterator` trait~~ — **Completed (see §30)**. Remaining: iterator combinators on HashMap values.
 - ~~**Error Messages with Source Locations**~~: **Completed (see §25)**.
 
 ---

@@ -4,6 +4,8 @@ import * as AST from "../ast/ast";
 export class Emitter {
     private enumDefinitions: Map<string, AST.EnumDefinition> = new Map();
     private hashMapVars: Set<string> = new Set();
+    private structVars: Set<string> = new Set();
+    private hasIntoIterator: boolean = false;
 
     public emit(node: AST.Node): string {
         if (node instanceof AST.Program) {
@@ -89,6 +91,17 @@ export class Emitter {
             const method = node.method.value;
             // collect() is identity for TS arrays (map/filter already return arrays eagerly)
             if (method === "collect") return obj;
+            // iter() is identity for TS arrays (JS arrays are already iterable)
+            if (method === "iter") return obj;
+            // count() → .length
+            if (method === "count") return `${obj}.length`;
+            // sum() → .reduce((a, b) => a + b, 0)
+            if (method === "sum") return `${obj}.reduce((a: number, b: number) => a + b, 0)`;
+            // for_each(f) → .forEach(f)
+            if (method === "for_each") {
+                const args = node.arguments.map(a => this.emit(a)).join(", ");
+                return `${obj}.forEach(${args})`;
+            }
             // HashMap keys()/values() return iterators in JS, need to spread into arrays
             if (node.object instanceof AST.Identifier && this.hashMapVars.has(node.object.value)) {
                 if (method === "keys") return `[...${obj}.keys()]`;
@@ -154,6 +167,10 @@ function _getType(obj: any) {
                 this.hashMapVars.add(stmt.name.value);
             }
         }
+        // Track struct variables for IntoIterator dispatch
+        if (stmt.value instanceof AST.StructLiteral) {
+            this.structVars.add(stmt.name.value);
+        }
         return `${keyword} ${stmt.name.value}${typeAnn} = ${value};`;
     }
 
@@ -163,6 +180,7 @@ function _getType(obj: any) {
     }
 
     private emitTraitDeclaration(trait: AST.TraitDeclaration): string {
+        if (trait.name.value === "IntoIterator") this.hasIntoIterator = true;
         const methods = trait.methods.map(m => `  ${m.name}: new Map()`).join(",\n");
         return `const ${trait.name.value} = {\n${methods}\n};`;
     }
@@ -314,6 +332,10 @@ function _getType(obj: any) {
         if (stmt.iterable instanceof AST.Identifier && this.hashMapVars.has(stmt.iterable.value)) {
             return `for (const ${varName} of ${collection}.keys()) ${body}`;
         }
+        // IntoIterator: if iterable is a struct variable with IntoIterator trait, use dispatch
+        if (this.hasIntoIterator && stmt.iterable instanceof AST.Identifier && this.structVars.has(stmt.iterable.value)) {
+            return `for (const ${varName} of IntoIterator.into_iter.get(_getType(${collection}))(${collection})) ${body}`;
+        }
         return `for (const ${varName} of ${collection}) ${body}`;
     }
 
@@ -384,6 +406,19 @@ ${bodyStmts}
         if (receiverName === "Vec" && expr.method.value === "new") return "[]";
         // HashMap::new() → new Map()
         if (receiverName === "HashMap" && expr.method.value === "new") return "new Map()";
+
+        // Math static calls → JavaScript Math.*
+        if (receiverName === "Math") {
+            const methodName = expr.method.value;
+            const args = expr.arguments.map(a => this.emit(a)).join(", ");
+            if (methodName === "pow") return `Math.pow(${args})`;
+            if (methodName === "sqrt") return `Math.floor(Math.sqrt(${args}))`;
+            if (methodName === "clamp") {
+                const [x, lo, hi] = expr.arguments.map(a => this.emit(a));
+                return `Math.min(Math.max(${x}, ${lo}), ${hi})`;
+            }
+            return `Math.${methodName}(${args})`;
+        }
 
         // Enum variant construction
         if (this.enumDefinitions.has(receiverName)) {

@@ -17,14 +17,10 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
-
-interface Point {
-  x: number;
-  y: number;
-}
-function test_member(p: any) {
-return ;
-};
-function main() {
-const p: Point = { x: 10, y: 20 };
-};
+const greeting: string = "Hello";
+const world: string = "World";
+const combined: string = greeting + " " + world;
+print(combined);
+print(42);
+print(0);
+print(-7);

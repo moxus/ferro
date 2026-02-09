@@ -18,13 +18,15 @@ function _getType(obj: any) {
   return type; // "string", "number", etc
 }
 
+
 interface Point {
   x: number;
   y: number;
 }
-function test_member(p: any) {
-return ;
-};
 function main() {
+;
 const p: Point = { x: 10, y: 20 };
+const x: int = p.x;
+p.x = 30;
+const y: int = p.y;
 };

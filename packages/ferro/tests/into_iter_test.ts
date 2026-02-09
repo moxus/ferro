@@ -17,14 +17,23 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
-
-interface Point {
-  x: number;
-  y: number;
+interface IntRange {
+  start: number;
+  end: number;
 }
-function test_member(p: any) {
-return ;
+const IntoIterator = {
+  into_iter: new Map()
 };
-function main() {
-const p: Point = { x: 10, y: 20 };
-};
+IntoIterator.into_iter.set("IntRange", function(self: any) {
+let v = [];
+for (let i = self.start; i < self.end; i++) {
+v.push(i);
+}
+return v;
+});
+const r: IntRange = { start: 0, end: 5 };
+let sum: int = 0;
+for (const x of IntoIterator.into_iter.get(_getType(r))(r)) {
+sum = sum + x;
+}
+print(sum);

@@ -1,5 +1,5 @@
 
-// FerroScript Runtime
+// Ferro Runtime
 class _ResultError extends Error {
   public error: any;
   constructor(error: any) { super(); this.error = error; }
