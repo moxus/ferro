@@ -231,6 +231,20 @@
 
 ---
 
+### 26. Bidirectional Type Inference for Closures
+- [x] **Analyzer `typeToASTType()`**: Converts analyzer `Type` back to AST `Type` node for patching untyped closure parameters.
+- [x] **`visitClosureExpression()` Context Params**: Accepts optional `expectedParamTypes` and `expectedReturnType`. When a closure param has `type === null`, the expected type from call context is used and the AST node is patched in-place.
+- [x] **Return Type Inference from Body**: When `returnType` is null and no expected return type is provided, the analyzer infers the return type from the last expression in the closure body and patches `expr.returnType`.
+- [x] **Vec.map / Vec.filter Inference**: `vec.map { x -> x * 2 }` infers `x: T` from `Vec<T>`. `vec.filter { it > 1 }` infers param type `T` and return type `bool`.
+- [x] **Function Call Inference**: When calling a function with a `(T) -> U` parameter, trailing lambda params are inferred from the function signature. E.g., `apply(5) { x -> x + 1 }` infers `x: int` from `fn apply(x: int, f: (int) -> int)`.
+- [x] **Vec/HashMap Static Call Type Tracking**: `Vec::<T>::new()` and `HashMap::<K,V>::new()` now return `generic_inst` types in the analyzer, enabling downstream method call inference.
+- [x] **LLVM Backend Softened**: Removed hard error for untyped closure params (analyzer patches types before codegen reaches them). Simplified return type inference to rely on analyzer-patched `returnType`.
+- [x] **Implicit `it` Support**: `vec.map { it * 2 }` works in both TS and LLVM backends with full type inference.
+- [x] **TypeScript Backend**: No changes needed — TypeScript's own inference handles untyped params. Patched return types produce cleaner output with explicit return type annotations.
+- [x] **Test Coverage**: 10 new analyzer unit tests and native integration test (`closure_infer_test.fe`) covering Vec.map/filter with trailing lambdas, implicit `it`, function call inference, and mixed explicit/inferred params.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -251,7 +265,7 @@
 
 ### 3. Language Features & Backends
 - **FFI Enhancements**: More robust handling of foreign function interfaces and platform-specific ABI considerations.
-- **Closures / First-Class Functions**: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. Remaining: heap-allocated environments for escaping closures, mutable capture by reference, bidirectional type inference for untyped trailing lambda params.
+- **Closures / First-Class Functions**: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. ~~Bidirectional type inference for untyped trailing lambda params~~ — **Completed (see §26)**. Remaining: heap-allocated environments for escaping closures, mutable capture by reference.
 - **Iterator Protocol**: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. Remaining: user-defined `IntoIterator` trait, iterator combinators on HashMap, lazy iterator chains.
 - ~~**Error Messages with Source Locations**~~: **Completed (see §25)**.
 
