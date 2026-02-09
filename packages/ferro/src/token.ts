@@ -32,6 +32,7 @@ export enum TokenType {
   // Literals
   Identifier = "IDENTIFIER",
   Number = "NUMBER",
+  Float = "FLOAT",
   String = "STRING",
   FString = "FSTRING", // f"...{expr}..."
 

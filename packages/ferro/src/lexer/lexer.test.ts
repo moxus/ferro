@@ -220,4 +220,60 @@ describe("Lexer", () => {
       expect(tok.literal).toBe(tt.literal);
     });
   });
+
+  it("should tokenize float literals", () => {
+    const input = "3.14 1.0 0.5";
+    const lexer = new Lexer(input);
+
+    const expected = [
+      { type: TokenType.Float, literal: "3.14" },
+      { type: TokenType.Float, literal: "1.0" },
+      { type: TokenType.Float, literal: "0.5" },
+      { type: TokenType.EOF, literal: "" },
+    ];
+
+    expected.forEach((tt) => {
+      const tok = lexer.nextToken();
+      expect(tok.type).toBe(tt.type);
+      expect(tok.literal).toBe(tt.literal);
+    });
+  });
+
+  it("should distinguish float from int followed by range", () => {
+    const input = "3..10";
+    const lexer = new Lexer(input);
+
+    const tok1 = lexer.nextToken();
+    expect(tok1.type).toBe(TokenType.Number);
+    expect(tok1.literal).toBe("3");
+
+    const tok2 = lexer.nextToken();
+    expect(tok2.type).toBe(TokenType.DotDot);
+    expect(tok2.literal).toBe("..");
+
+    const tok3 = lexer.nextToken();
+    expect(tok3.type).toBe(TokenType.Number);
+    expect(tok3.literal).toBe("10");
+  });
+
+  it("should tokenize f64 type annotation", () => {
+    const input = "let x: f64 = 3.14";
+    const lexer = new Lexer(input);
+
+    const expected = [
+      { type: TokenType.Let, literal: "let" },
+      { type: TokenType.Identifier, literal: "x" },
+      { type: TokenType.Colon, literal: ":" },
+      { type: TokenType.Identifier, literal: "f64" },
+      { type: TokenType.Equals, literal: "=" },
+      { type: TokenType.Float, literal: "3.14" },
+      { type: TokenType.EOF, literal: "" },
+    ];
+
+    expected.forEach((tt) => {
+      const tok = lexer.nextToken();
+      expect(tok.type).toBe(tt.type);
+      expect(tok.literal).toBe(tt.literal);
+    });
+  });
 });

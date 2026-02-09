@@ -472,4 +472,47 @@ describe("Parser", () => {
     expect(expr.parts.length).toBe(1);
     expect((expr.parts[0] as AST.StringLiteral).value).toBe("just text");
   });
+
+  it("should parse float literals", () => {
+    const input = `let x: f64 = 3.14;`;
+    const lexer = new Lexer(input);
+    const parser = new Parser(lexer);
+    const program = parser.ParseProgram();
+
+    expect(parser.getErrors().length).toBe(0);
+    expect(program.statements.length).toBe(1);
+    const stmt = program.statements[0] as AST.LetStatement;
+    expect(stmt.value).toBeInstanceOf(AST.FloatLiteral);
+    expect((stmt.value as AST.FloatLiteral).value).toBe(3.14);
+    expect((stmt.type as AST.TypeIdentifier).value).toBe("f64");
+  });
+
+  it("should parse float arithmetic", () => {
+    const input = `1.5 + 2.5;`;
+    const lexer = new Lexer(input);
+    const parser = new Parser(lexer);
+    const program = parser.ParseProgram();
+
+    expect(parser.getErrors().length).toBe(0);
+    const stmt = program.statements[0] as AST.ExpressionStatement;
+    const infix = stmt.expression as AST.InfixExpression;
+    expect(infix.operator).toBe("+");
+    expect(infix.left).toBeInstanceOf(AST.FloatLiteral);
+    expect((infix.left as AST.FloatLiteral).value).toBe(1.5);
+    expect(infix.right).toBeInstanceOf(AST.FloatLiteral);
+    expect((infix.right as AST.FloatLiteral).value).toBe(2.5);
+  });
+
+  it("should parse float cast", () => {
+    const input = `x as f64;`;
+    const lexer = new Lexer(input);
+    const parser = new Parser(lexer);
+    const program = parser.ParseProgram();
+
+    expect(parser.getErrors().length).toBe(0);
+    const stmt = program.statements[0] as AST.ExpressionStatement;
+    const cast = stmt.expression as AST.CastExpression;
+    expect(cast).toBeInstanceOf(AST.CastExpression);
+    expect((cast.targetType as AST.TypeIdentifier).value).toBe("f64");
+  });
 });

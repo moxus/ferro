@@ -1,0 +1,40 @@
+// Test: f64 floating-point type support
+
+// Float literals
+let pi: f64 = 3.14
+let e: f64 = 2.718
+
+// Arithmetic
+let sum: f64 = pi + e
+let diff: f64 = pi - e
+let prod: f64 = pi * e
+let quot: f64 = pi / e
+
+// Negation
+let neg: f64 = -3.14
+
+// Comparison
+let is_greater: bool = pi > e
+let is_equal: bool = pi == pi
+let is_less: bool = e < pi
+
+// Type annotations
+fn add_floats(a: f64, b: f64) -> f64 {
+    a + b
+}
+
+let result: f64 = add_floats(1.5, 2.5)
+
+// Cast int to f64
+let x: int = 42
+let y: f64 = x as f64
+
+// Cast f64 to int (truncates)
+let z: int = pi as int
+
+// Print float
+print(3.14)
+
+// F-string interpolation
+let msg: string = f"Pi is approximately {pi}"
+print(msg)

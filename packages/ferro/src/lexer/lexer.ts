@@ -176,7 +176,9 @@ export class Lexer {
           const type = lookupIdent(literal);
           return { type, literal, line, column: col };
         } else if (this.isDigit(this.ch)) {
-          return { type: TokenType.Number, literal: this.readNumber(), line, column: col };
+          const numStr = this.readNumber();
+          const tokType = numStr.includes('.') ? TokenType.Float : TokenType.Number;
+          return { type: tokType, literal: numStr, line, column: col };
         } else {
           tok = { type: TokenType.Illegal, literal: this.ch, line, column: col };
         }
@@ -217,6 +219,13 @@ export class Lexer {
     const position = this.position;
     while (this.ch !== null && this.isDigit(this.ch)) {
       this.readChar();
+    }
+    // Check for fractional part: '.' followed by a digit (not '..' range operator)
+    if (this.ch === '.' && this.peekChar() !== null && this.isDigit(this.peekChar()!)) {
+      this.readChar(); // consume '.'
+      while (this.ch !== null && this.isDigit(this.ch)) {
+        this.readChar();
+      }
     }
     return this.input.slice(position, this.position);
   }
