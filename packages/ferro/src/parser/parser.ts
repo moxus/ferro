@@ -94,7 +94,7 @@ export class Parser {
     this.registerInfix(TokenType.EqEq, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.Question, this.parseQuestionExpression.bind(this));
     this.registerInfix(TokenType.NotEq, this.parseInfixExpression.bind(this));
-    this.registerInfix(TokenType.LT, this.parseInfixExpression.bind(this));
+    this.registerInfix(TokenType.LT, this.parseLTExpression.bind(this));
     this.registerInfix(TokenType.GT, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.LtEq, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.GtEq, this.parseInfixExpression.bind(this));
@@ -113,6 +113,22 @@ export class Parser {
     this.curToken = this.peekToken;
     this.peekToken = this.peekAheadToken;
     this.peekAheadToken = this.lexer.nextToken();
+  }
+
+  private saveState() {
+    return {
+      curToken: this.curToken,
+      peekToken: this.peekToken,
+      peekAheadToken: this.peekAheadToken,
+      lexerState: this.lexer.saveState(),
+    };
+  }
+
+  private restoreState(state: { curToken: Token, peekToken: Token, peekAheadToken: Token, lexerState: { position: number, readPosition: number, ch: string | null, line: number, column: number } }) {
+    this.curToken = state.curToken;
+    this.peekToken = state.peekToken;
+    this.peekAheadToken = state.peekAheadToken;
+    this.lexer.restoreState(state.lexerState);
   }
 
   public ParseProgram(): AST.Program {
@@ -1239,29 +1255,92 @@ export class Parser {
     return args;
   }
 
-  private parseStaticCall(left: AST.Expression): AST.Expression | null {
-    const token = this.curToken; // ::
-    
-    // Check for < (Generics)
-    if (this.peekTokenIs(TokenType.LT)) {
-        this.nextToken(); // consume ::
-        this.nextToken(); // consume <
-        
-        const typeArgs: AST.Type[] = [];
-        while (!this.curTokenIs(TokenType.GT) && !this.curTokenIs(TokenType.EOF)) {
-            typeArgs.push(this.parseType());
-            if (this.peekTokenIs(TokenType.Comma)) {
-                this.nextToken();
-                this.nextToken();
-            } else {
-                this.nextToken();
-            }
-        }
-        
-        return new AST.GenericInstantiationExpression(token, left, typeArgs);
+  /**
+   * Lookahead scan: determines if `<` starts generic type args rather than comparison.
+   * Called when curToken is `<`. Saves state, scans forward for balanced `<>`,
+   * checks what follows the closing `>`, then restores state.
+   */
+  private isGenericTypeArgs(): boolean {
+    const saved = this.saveState();
+    // curToken is `<`; scan forward
+    let depth = 1;
+    this.nextToken(); // move past opening <
+    while (depth > 0 && !this.curTokenIs(TokenType.EOF)) {
+      const t = this.curToken.type;
+      if (t === TokenType.LT) {
+        depth++;
+      } else if (t === TokenType.GT) {
+        depth--;
+        if (depth === 0) break;
+      } else if (
+        t !== TokenType.Identifier &&
+        t !== TokenType.Comma &&
+        t !== TokenType.Star &&       // pointer types
+        t !== TokenType.LPharen &&    // function types
+        t !== TokenType.RPharen &&
+        t !== TokenType.Arrow         // -> in function types
+      ) {
+        // Not a valid type token inside angle brackets — it's a comparison
+        this.restoreState(saved);
+        return false;
+      }
+      this.nextToken();
     }
 
-    // Handle generic enum variant: Option::<int>::Some(42)
+    if (depth !== 0) {
+      this.restoreState(saved);
+      return false;
+    }
+
+    // curToken is the closing `>`. Check what follows.
+    const next = this.peekToken.type;
+    this.restoreState(saved);
+    return (
+      next === TokenType.LPharen ||     // generic call: foo<int>(...)
+      next === TokenType.DoubleColon ||  // static method: Vec<int>::new()
+      next === TokenType.LBrace ||       // struct literal: Box<int> { ... }
+      next === TokenType.Semi ||         // end of statement
+      next === TokenType.RPharen ||      // inside parens
+      next === TokenType.Comma ||        // in argument list
+      next === TokenType.Equals ||       // let x = Vec<int>::new()
+      next === TokenType.GT ||           // nested: Option<Vec<int>>
+      next === TokenType.EOF
+    );
+  }
+
+  /**
+   * Handles `<` as either generic type arguments or less-than comparison.
+   * When left is an Identifier and lookahead confirms generics, parses type args.
+   * Otherwise falls through to comparison.
+   */
+  private parseLTExpression(left: AST.Expression): AST.Expression | null {
+    // Only identifiers can have generic type args
+    if (left instanceof AST.Identifier && this.isGenericTypeArgs()) {
+      const token = this.curToken; // <
+      this.nextToken(); // move past <
+
+      const typeArgs: AST.Type[] = [];
+      while (!this.curTokenIs(TokenType.GT) && !this.curTokenIs(TokenType.EOF)) {
+        typeArgs.push(this.parseType());
+        if (this.peekTokenIs(TokenType.Comma)) {
+          this.nextToken();
+          this.nextToken();
+        } else {
+          this.nextToken();
+        }
+      }
+
+      return new AST.GenericInstantiationExpression(token, left, typeArgs);
+    }
+
+    // Fall through to normal comparison
+    return this.parseInfixExpression(left);
+  }
+
+  private parseStaticCall(left: AST.Expression): AST.Expression | null {
+    const token = this.curToken; // ::
+
+    // Handle generic type + static call: Vec<int>::new()
     // left is GenericInstantiationExpression, extract the receiver Identifier
     let receiver: AST.Identifier;
     let genericTypeArgs: AST.Type[] | undefined;

@@ -104,7 +104,7 @@ fn identity<T>(x: T) -> T {
     x
 }
 
-let val = identity::<int>(42);   // turbofish syntax
+let val = identity<int>(42);   // explicit type argument
 ```
 
 ### Control Flow
@@ -224,7 +224,7 @@ struct Box<T> {
     value: T
 }
 
-let b = Box::<int> { value: 42 };
+let b = Box<int> { value: 42 };
 ```
 
 ---
@@ -257,7 +257,7 @@ enum Option<T> {
     None,
 }
 
-let maybe = Option::<int>::Some(42);
+let maybe = Option<int>::Some(42);
 ```
 
 ---
@@ -372,7 +372,7 @@ Option has the same set of methods as Result: `unwrap`, `unwrap_or`, `is_some`, 
 Dynamic, heap-allocated arrays:
 
 ```rust
-let mut v = Vec::<int>::new();
+let mut v = Vec<int>::new();
 v.push(10);
 v.push(20);
 v.push(30);
@@ -392,7 +392,7 @@ for (x in v) {
 Key-value store with open-addressing:
 
 ```rust
-let mut m = HashMap::<int, string>::new();
+let mut m = HashMap<int, string>::new();
 m.insert(1, "one");
 m.insert(2, "two");
 
@@ -449,7 +449,7 @@ print(add5(10));   // 15
 Lazy iterator chains are fused at compile time into a single loop with zero allocation overhead:
 
 ```rust
-let nums = Vec::<int>::new();
+let nums = Vec<int>::new();
 // ... push some values ...
 
 // Lazy chain: nothing happens until a terminal operation

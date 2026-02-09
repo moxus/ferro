@@ -1,7 +1,7 @@
 // Lazy iterator chain tests
 
 // Basic iter().collect() — identity
-let mut v = Vec::<int>::new();
+let mut v = Vec<int>::new();
 v.push(1);
 v.push(2);
 v.push(3);

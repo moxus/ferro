@@ -42,7 +42,7 @@ describe("Bidirectional Type Inference", () => {
     describe("Vec.map trailing lambda", () => {
         it("should infer param type from Vec<int> element type", () => {
             const input = `
-                let mut v = Vec::<int>::new();
+                let mut v = Vec<int>::new();
                 v.push(1);
                 let r = v.map { x -> x * 2 };
             `;
@@ -57,7 +57,7 @@ describe("Bidirectional Type Inference", () => {
 
         it("should infer param type with implicit it", () => {
             const input = `
-                let mut v = Vec::<int>::new();
+                let mut v = Vec<int>::new();
                 v.push(1);
                 let r = v.map { it * 2 };
             `;
@@ -73,7 +73,7 @@ describe("Bidirectional Type Inference", () => {
 
         it("should infer return type from body expression", () => {
             const input = `
-                let mut v = Vec::<int>::new();
+                let mut v = Vec<int>::new();
                 v.push(1);
                 let r = v.map { x -> x * 2 };
             `;
@@ -87,7 +87,7 @@ describe("Bidirectional Type Inference", () => {
 
         it("should preserve explicit type annotations", () => {
             const input = `
-                let mut v = Vec::<int>::new();
+                let mut v = Vec<int>::new();
                 v.push(1);
                 let r = v.map((x: int) -> int { x * 2 });
             `;
@@ -102,7 +102,7 @@ describe("Bidirectional Type Inference", () => {
 
         it("should infer param type from Vec<string> element type", () => {
             const input = `
-                let mut v = Vec::<string>::new();
+                let mut v = Vec<string>::new();
                 v.push("hello");
                 let r = v.map { s -> s };
             `;
@@ -118,7 +118,7 @@ describe("Bidirectional Type Inference", () => {
     describe("Vec.filter trailing lambda", () => {
         it("should infer param type and bool return type", () => {
             const input = `
-                let mut v = Vec::<int>::new();
+                let mut v = Vec<int>::new();
                 v.push(1);
                 let r = v.filter { x -> x > 1 };
             `;
@@ -135,7 +135,7 @@ describe("Bidirectional Type Inference", () => {
 
         it("should infer filter with implicit it", () => {
             const input = `
-                let mut v = Vec::<int>::new();
+                let mut v = Vec<int>::new();
                 v.push(1);
                 let r = v.filter { it > 1 };
             `;
@@ -190,7 +190,7 @@ describe("Bidirectional Type Inference", () => {
     describe("No diagnostics for inferred closures", () => {
         it("should not produce diagnostics for fully inferred closures", () => {
             const input = `
-                let mut v = Vec::<int>::new();
+                let mut v = Vec<int>::new();
                 v.push(1);
                 v.push(2);
                 v.push(3);

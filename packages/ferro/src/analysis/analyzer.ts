@@ -400,7 +400,7 @@ export class Analyzer {
                 }
             }
 
-            // Trait bound validation for generic calls: fn::<Type>(args)
+            // Trait bound validation for generic calls: fn<Type>(args)
             if (expr.function instanceof AST.GenericInstantiationExpression) {
                 const genExpr = expr.function;
                 if (genExpr.left instanceof AST.Identifier) {
@@ -502,7 +502,7 @@ export class Analyzer {
                 }
             }
 
-            // Recognize Vec::<T>::new() and HashMap::<K,V>::new() constructors
+            // Recognize Vec<T>::new() and HashMap<K,V>::new() constructors
             if (expr.method.value === "new" && expr.genericTypeArgs && expr.genericTypeArgs.length > 0) {
                 if (receiverName === "Vec" || receiverName === "HashMap") {
                     return {

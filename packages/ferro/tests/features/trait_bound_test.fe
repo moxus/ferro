@@ -14,5 +14,5 @@ fn process<T: Summary>(x: T) -> T {
     x
 }
 
-let result: int = process::<int>(41);
+let result: int = process<int>(41);
 print(result);

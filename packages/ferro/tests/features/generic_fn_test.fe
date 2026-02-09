@@ -4,8 +4,8 @@ fn identity<T>(x: T) -> T {
     x
 }
 
-let a: int = identity::<int>(42);
-let b: bool = identity::<bool>(true);
+let a: int = identity<int>(42);
+let b: bool = identity<bool>(true);
 
 print(a);
 

@@ -1,5 +1,5 @@
 // Test: HashMap<K, V> hash map
-let mut m = HashMap::<int, int>::new();
+let mut m = HashMap<int, int>::new();
 m.insert(1, 100);
 m.insert(2, 200);
 m.insert(3, 300);

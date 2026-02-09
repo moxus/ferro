@@ -1152,7 +1152,7 @@ export class LLVMEmitter {
                 return;
             }
 
-            // Vec::<T>::new() / HashMap::<K,V>::new() — track element types
+            // Vec<T>::new() / HashMap<K,V>::new() — track element types
             if (stmt.value instanceof AST.StaticCallExpression) {
                 const sc = stmt.value as AST.StaticCallExpression;
                 if (sc.receiver.value === "Vec" && sc.genericTypeArgs && sc.genericTypeArgs.length > 0) {
@@ -1540,7 +1540,7 @@ export class LLVMEmitter {
             return "i32";
         }
         if (expr instanceof AST.CallExpression) {
-            // Generic function call: identity::<int>(42)
+            // Generic function call: identity<int>(42)
             if (expr.function instanceof AST.GenericInstantiationExpression) {
                 const genExpr = expr.function;
                 if (genExpr.left instanceof AST.Identifier) {
@@ -1602,9 +1602,9 @@ export class LLVMEmitter {
              return lt;
         }
         if (expr instanceof AST.StaticCallExpression) {
-            // Vec::<T>::new() returns the Vec struct type
+            // Vec<T>::new() returns the Vec struct type
             if (expr.receiver.value === "Vec" && expr.method.value === "new") return this.getVecStructType();
-            // HashMap::<K,V>::new() returns the HashMap struct type
+            // HashMap<K,V>::new() returns the HashMap struct type
             if (expr.receiver.value === "HashMap" && expr.method.value === "new") return this.getHashMapStructType();
             // File static methods
             if (expr.receiver.value === "File") {
@@ -2008,7 +2008,7 @@ export class LLVMEmitter {
         let enumName = this.getMangledName(expr.receiver.value, this.currentModulePath);
         if (sym) enumName = this.getMangledName(sym.name, sym.sourceModule);
 
-        // Vec::<T>::new() → call fs_vec_new(elem_size)
+        // Vec<T>::new() → call fs_vec_new(elem_size)
         if (expr.receiver.value === "Vec" && expr.method.value === "new" && expr.genericTypeArgs && expr.genericTypeArgs.length > 0) {
             const elemType = this.mapType(expr.genericTypeArgs[0]);
             const elemSize = this.sizeOfLLVMType(elemType);
@@ -2018,7 +2018,7 @@ export class LLVMEmitter {
             return reg;
         }
 
-        // HashMap::<K, V>::new() → call fs_hashmap_new(key_size, value_size)
+        // HashMap<K, V>::new() → call fs_hashmap_new(key_size, value_size)
         if (expr.receiver.value === "HashMap" && expr.method.value === "new" && expr.genericTypeArgs && expr.genericTypeArgs.length >= 2) {
             const keyType = this.mapType(expr.genericTypeArgs[0]);
             const valType = this.mapType(expr.genericTypeArgs[1]);
@@ -2030,7 +2030,7 @@ export class LLVMEmitter {
             return reg;
         }
 
-        // Handle generic enum variant construction: Option::<int>::Some(42)
+        // Handle generic enum variant construction: Option<int>::Some(42)
         if (expr.genericTypeArgs && expr.genericTypeArgs.length > 0 && this.genericEnums.has(enumName)) {
             const typeArgs = expr.genericTypeArgs.map(t => this.mapType(t));
             enumName = this.instantiateEnum(enumName, typeArgs);
@@ -2647,7 +2647,7 @@ export class LLVMEmitter {
 
     
 
-            // Generic function call: identity::<int>(42)
+            // Generic function call: identity<int>(42)
             if (expr.function instanceof AST.GenericInstantiationExpression) {
                 const genExpr = expr.function;
                 if (genExpr.left instanceof AST.Identifier) {

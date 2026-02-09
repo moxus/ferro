@@ -122,8 +122,8 @@
 
 ### 15. Generics
 - [x] **Generic Structs**: `struct Box<T> { value: T }` — type parameter parsing, monomorphization in LLVM backend, native TS generics in TS backend.
-- [x] **Generic Functions**: `fn identity<T>(x: T) -> T` — turbofish syntax (`identity::<int>(42)`), LLVM monomorphization with deferred output buffer, TS native generics.
-- [x] **Generic Enums**: `enum Option<T> { Some(T), None }` — type parameter parsing, generic enum variant construction (`Option::<int>::Some(42)`), LLVM monomorphization.
+- [x] **Generic Functions**: `fn identity<T>(x: T) -> T` — TypeScript-style type arguments (`identity<int>(42)`), LLVM monomorphization with deferred output buffer, TS native generics.
+- [x] **Generic Enums**: `enum Option<T> { Some(T), None }` — type parameter parsing, generic enum variant construction (`Option<int>::Some(42)`), LLVM monomorphization.
 - [x] **Analyzer Generic Context**: `genericContext: string[]` tracking, `generic_param` type kind, permissive type checking for generic parameters.
 - [x] **Trait/Impl LLVM Backend**: Complete trait and impl block support in LLVM backend — trait method registration, impl method emission as standalone functions, static trait dispatch via `TraitName::method(self, args)`.
 - [x] **Generic Impl Blocks**: `impl<T> Trait for Type<T>` syntax — AST `typeParams`/`targetTypeArgs` on `ImplBlock`, parser support, on-demand monomorphization of generic impl methods.
@@ -162,9 +162,9 @@
 
 ### 19. Heap-Allocated Collections (`Vec<T>` & `HashMap<K,V>`)
 - [x] **`Vec<T>` Runtime**: Type-erased `fs_Vec` struct (`*i8` data, `len`, `cap`, `elem_size`) with `fs_vec_new`, `fs_vec_push`, `fs_vec_get`, `fs_vec_set`, `fs_vec_pop`, `fs_vec_len`, `fs_vec_free` in `runtime.fe`.
-- [x] **`Vec<T>` Compiler Support**: `Vec::<T>::new()` static call emits `fs_vec_new(elem_size)`, method calls (`push`, `get`, `set`, `pop`, `len`) dispatch to runtime functions with `i8*` bitcasts. Alloca-address passing for mutating methods.
+- [x] **`Vec<T>` Compiler Support**: `Vec<T>::new()` static call emits `fs_vec_new(elem_size)`, method calls (`push`, `get`, `set`, `pop`, `len`) dispatch to runtime functions with `i8*` bitcasts. Alloca-address passing for mutating methods.
 - [x] **`HashMap<K,V>` Runtime**: Type-erased `fs_HashMap` struct with open-addressing linear probing. Hash functions (`fs_hash_int`, `fs_hash_string`), `fs_hashmap_new`, `fs_hashmap_insert`, `fs_hashmap_get`, `fs_hashmap_contains`, `fs_hashmap_remove`, `fs_hashmap_len`, `fs_hashmap_free`, `fs_hashmap_resize`, `fs_mem_eq` in `runtime.fe`.
-- [x] **`HashMap<K,V>` Compiler Support**: `HashMap::<K,V>::new()` static call, method dispatch to runtime functions with key/value bitcasts and hash computation. `contains_key` returns `i32` (zext from `i1`).
+- [x] **`HashMap<K,V>` Compiler Support**: `HashMap<K,V>::new()` static call, method dispatch to runtime functions with key/value bitcasts and hash computation. `contains_key` returns `i32` (zext from `i1`).
 - [x] **TS Backend**: `Vec::new()` → `[]`, `HashMap::new()` → `new Map()`.
 - [x] **LLVM Emitter Fixes**: `bb_entry` label to avoid parameter name conflicts, terminator-aware branch emission in if-blocks, duplicate `ret` prevention for implicit expression returns containing explicit `return` statements.
 
@@ -238,7 +238,7 @@
 - [x] **Return Type Inference from Body**: When `returnType` is null and no expected return type is provided, the analyzer infers the return type from the last expression in the closure body and patches `expr.returnType`.
 - [x] **Vec.map / Vec.filter Inference**: `vec.map { x -> x * 2 }` infers `x: T` from `Vec<T>`. `vec.filter { it > 1 }` infers param type `T` and return type `bool`.
 - [x] **Function Call Inference**: When calling a function with a `(T) -> U` parameter, trailing lambda params are inferred from the function signature. E.g., `apply(5) { x -> x + 1 }` infers `x: int` from `fn apply(x: int, f: (int) -> int)`.
-- [x] **Vec/HashMap Static Call Type Tracking**: `Vec::<T>::new()` and `HashMap::<K,V>::new()` now return `generic_inst` types in the analyzer, enabling downstream method call inference.
+- [x] **Vec/HashMap Static Call Type Tracking**: `Vec<T>::new()` and `HashMap<K,V>::new()` now return `generic_inst` types in the analyzer, enabling downstream method call inference.
 - [x] **LLVM Backend Softened**: Removed hard error for untyped closure params (analyzer patches types before codegen reaches them). Simplified return type inference to rely on analyzer-patched `returnType`.
 - [x] **Implicit `it` Support**: `vec.map { it * 2 }` works in both TS and LLVM backends with full type inference.
 - [x] **TypeScript Backend**: No changes needed — TypeScript's own inference handles untyped params. Patched return types produce cleaner output with explicit return type annotations.

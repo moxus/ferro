@@ -385,7 +385,7 @@ export class GenericInstantiationExpression implements Expression {
 
     expressionNode() {}
     tokenLiteral(): string { return this.token.literal; }
-    toString(): string { return `${this.left.toString()}::<${this.typeArgs.map(t => t.toString()).join(", ")}>`; }
+    toString(): string { return `${this.left.toString()}<${this.typeArgs.map(t => t.toString()).join(", ")}>`; }
 }
 
 export class StructDefinition implements Statement {

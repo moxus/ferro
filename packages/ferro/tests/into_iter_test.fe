@@ -11,7 +11,7 @@ trait IntoIterator {
 
 impl IntoIterator for IntRange {
     fn into_iter(self: IntRange) -> Vec<int> {
-        let mut v = Vec::<int>::new();
+        let mut v = Vec<int>::new();
         for (i in self.start..self.end) {
             v.push(i);
         }

@@ -1,5 +1,5 @@
 // Test: for-in with Vec<int>
-let mut v = Vec::<int>::new();
+let mut v = Vec<int>::new();
 v.push(10);
 v.push(20);
 v.push(30);
@@ -20,7 +20,7 @@ print(sum);
 // Expected: 10
 
 // Test: HashMap key iteration
-let mut m = HashMap::<int, int>::new();
+let mut m = HashMap<int, int>::new();
 m.insert(1, 10);
 m.insert(2, 20);
 m.insert(3, 30);
@@ -33,7 +33,7 @@ print(key_sum);
 // Expected: 6
 
 // Test: Vec.map with closure
-let mut nums = Vec::<int>::new();
+let mut nums = Vec<int>::new();
 nums.push(1);
 nums.push(2);
 nums.push(3);

@@ -1,5 +1,5 @@
 // Test: Vec<T> dynamic array
-let mut v = Vec::<int>::new();
+let mut v = Vec<int>::new();
 v.push(10);
 v.push(20);
 v.push(30);

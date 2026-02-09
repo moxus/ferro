@@ -1,7 +1,7 @@
 // Test: Bidirectional type inference for closure params
 
 // --- Vec.map with inferred params (trailing lambda) ---
-let mut nums = Vec::<int>::new();
+let mut nums = Vec<int>::new();
 nums.push(1);
 nums.push(2);
 nums.push(3);

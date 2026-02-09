@@ -15,5 +15,5 @@ fn process<T: Summary>(x: T) -> T {
 }
 
 // This should produce a semantic error: bool does not implement Summary
-let result: bool = process::<bool>(true);
+let result: bool = process<bool>(true);
 print(1);

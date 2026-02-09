@@ -294,4 +294,16 @@ export class Lexer {
   private isDigit(ch: string): boolean {
     return "0" <= ch && ch <= "9";
   }
+
+  public saveState(): { position: number, readPosition: number, ch: string | null, line: number, column: number } {
+    return { position: this.position, readPosition: this.readPosition, ch: this.ch, line: this.line, column: this.column };
+  }
+
+  public restoreState(state: { position: number, readPosition: number, ch: string | null, line: number, column: number }) {
+    this.position = state.position;
+    this.readPosition = state.readPosition;
+    this.ch = state.ch;
+    this.line = state.line;
+    this.column = state.column;
+  }
 }
