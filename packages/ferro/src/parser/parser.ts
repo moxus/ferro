@@ -1097,9 +1097,9 @@ export class Parser {
             if (this.peekTokenIs(TokenType.Comma)) {
                 this.nextToken();
                 this.nextToken();
-            } else if (!this.peekTokenIs(TokenType.GT)) {
-                // error or unexpected
-                this.nextToken(); 
+            } else {
+                // Advance past the type param (to GT or whatever comes next)
+                this.nextToken();
             }
         }
     }

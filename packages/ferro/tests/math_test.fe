@@ -1,0 +1,27 @@
+// Math utility tests
+
+// abs
+print(Math::abs(5));      // 5
+print(Math::abs(-3));     // 3
+print(Math::abs(0));      // 0
+
+// min / max
+print(Math::min(3, 7));   // 3
+print(Math::max(3, 7));   // 7
+print(Math::min(-1, 1));  // -1
+print(Math::max(-1, 1));  // 1
+
+// pow
+print(Math::pow(2, 10));  // 1024
+print(Math::pow(3, 3));   // 27
+print(Math::pow(5, 0));   // 1
+
+// sqrt
+print(Math::sqrt(100));   // 10
+print(Math::sqrt(81));    // 9
+print(Math::sqrt(2));     // 1
+
+// clamp
+print(Math::clamp(5, 0, 10));   // 5
+print(Math::clamp(-3, 0, 10));  // 0
+print(Math::clamp(15, 0, 10));  // 10

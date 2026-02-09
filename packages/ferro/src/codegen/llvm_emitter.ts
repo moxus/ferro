@@ -253,7 +253,8 @@ export class LLVMEmitter {
             "fs_hashmap_contains", "fs_hashmap_remove", "fs_hashmap_len", "fs_hashmap_free",
             "fs_hashmap_iter_next",
             "fs_file_open", "fs_file_close", "fs_file_read", "fs_file_write",
-            "fs_file_read_line", "fs_file_write_string", "fs_file_seek", "fs_file_tell"
+            "fs_file_read_line", "fs_file_write_string", "fs_file_seek", "fs_file_tell",
+            "fs_math_abs", "fs_math_min", "fs_math_max", "fs_math_pow", "fs_math_sqrt", "fs_math_clamp"
         ]);
         modules.forEach((mod, path) => {
             mod.program.statements.forEach(stmt => {
@@ -1034,35 +1035,57 @@ export class LLVMEmitter {
                 }
             }
 
-            // Track Vec element types from method call results (map, filter, keys, values)
+            // Track Vec element types from method call results (map, filter, keys, values, collect)
             if (stmt.value instanceof AST.MethodCallExpression) {
                 const mc = stmt.value as AST.MethodCallExpression;
-                const objType = this.getExpressionType(mc.object);
                 const mName = mc.method.value;
-                if (this.isVecType(objType)) {
-                    if (mName === "filter" || mName === "collect") {
-                        const srcElemType = this.getVecElemType(mc.object);
-                        this.vecElemTypes.set(stmt.name.value, srcElemType);
-                    } else if (mName === "map") {
-                        // Will be set by emitVecMethodCall during emission
-                        // Use a deferred approach: emit first, then read lastMapOutputElemType
+
+                // Lazy iterator chain: collect() produces a Vec whose element type
+                // we can trace from the chain source + map steps
+                if (mName === "collect" && this.isIteratorChain(mc)) {
+                    const chain = this.analyzeIteratorChain(mc);
+                    if (chain) {
+                        let et = chain.sourceKind === "vec"
+                            ? this.getVecElemType(chain.source)
+                            : this.getHashMapKeyValueTypes(chain.source).keyType;
+                        for (const step of chain.steps) {
+                            if (step.kind === "map" && step.closure instanceof AST.ClosureExpression && step.closure.returnType) {
+                                et = this.mapType(step.closure.returnType);
+                            }
+                        }
+                        this.vecElemTypes.set(stmt.name.value, et);
                     }
-                } else if (this.isHashMapType(objType)) {
-                    const { keyType, valueType } = this.getHashMapKeyValueTypes(mc.object);
-                    if (mName === "keys") {
-                        this.vecElemTypes.set(stmt.name.value, keyType);
-                    } else if (mName === "values") {
-                        this.vecElemTypes.set(stmt.name.value, valueType);
+                } else {
+                    const objType = this.getExpressionType(mc.object);
+                    if (this.isVecType(objType)) {
+                        if (mName === "filter" || mName === "collect") {
+                            const srcElemType = this.getVecElemType(mc.object);
+                            this.vecElemTypes.set(stmt.name.value, srcElemType);
+                        } else if (mName === "map") {
+                            // Will be set by emitVecMethodCall during emission
+                            // Use a deferred approach: emit first, then read lastMapOutputElemType
+                        }
+                    } else if (this.isHashMapType(objType)) {
+                        const { keyType, valueType } = this.getHashMapKeyValueTypes(mc.object);
+                        if (mName === "keys") {
+                            this.vecElemTypes.set(stmt.name.value, keyType);
+                        } else if (mName === "values") {
+                            this.vecElemTypes.set(stmt.name.value, valueType);
+                        }
                     }
                 }
             }
 
             const valReg = this.emitExpression(stmt.value!);
 
-            // Post-emission: track map output elem type (set during emitVecMethodCall)
+            // Post-emission: track map/collect output elem type
             if (stmt.value instanceof AST.MethodCallExpression) {
                 const mc = stmt.value as AST.MethodCallExpression;
                 if (mc.method.value === "map" && this.isVecType(this.getExpressionType(mc.object))) {
+                    this.vecElemTypes.set(stmt.name.value, this.lastMapOutputElemType);
+                }
+                // Iterator chain collect also sets lastMapOutputElemType
+                if (mc.method.value === "collect" && this.isIteratorChain(mc)) {
                     this.vecElemTypes.set(stmt.name.value, this.lastMapOutputElemType);
                 }
             }
@@ -1134,12 +1157,23 @@ export class LLVMEmitter {
         if (stmt.iterable instanceof AST.RangeExpression) {
             this.emitRangeForLoop(stmt);
         } else {
+            // Check for lazy iterator chain: for (x in vec.iter().filter(...))
+            if (this.isIteratorChain(stmt.iterable)) {
+                this.emitIteratorForLoop(stmt);
+                return;
+            }
+
             // Collection iteration
             const iterableType = this.getExpressionType(stmt.iterable);
             if (this.isVecType(iterableType)) {
                 this.emitVecForLoop(stmt);
             } else if (this.isHashMapType(iterableType)) {
                 this.emitHashMapForLoop(stmt);
+            } else {
+                // Try IntoIterator for user-defined types
+                if (!this.tryEmitIntoIteratorForLoop(stmt)) {
+                    // Unknown collection type - emit nothing (will be caught by analyzer)
+                }
             }
         }
     }
@@ -1407,6 +1441,8 @@ export class LLVMEmitter {
             if (expr.receiver.value === "Vec" && expr.method.value === "new") return this.getVecStructType();
             // HashMap::<K,V>::new() returns the HashMap struct type
             if (expr.receiver.value === "HashMap" && expr.method.value === "new") return this.getHashMapStructType();
+            // Math static calls return i32
+            if (expr.receiver.value === "Math") return "i32";
 
             const sym = this.currentScope?.resolve(expr.receiver.value);
             let enumName = this.getMangledName(expr.receiver.value, this.currentModulePath);
@@ -1794,6 +1830,19 @@ export class LLVMEmitter {
 
         if (this.enumDefs.has(enumName)) {
             return this.emitEnumVariantConstruction(enumName, expr.method.value, expr.arguments);
+        }
+
+        // Math static calls: Math::abs(x), Math::min(a, b), etc.
+        if (expr.receiver.value === "Math") {
+            const methodName = expr.method.value;
+            const fnName = `fs_math_${methodName}`;
+            const args = expr.arguments.map(a => {
+                const val = this.emitExpression(a);
+                return `i32 ${val}`;
+            });
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i32 @${fnName}(${args.join(", ")})\n`;
+            return reg;
         }
 
         // Trait method dispatch: TraitName::method(self, args...)
@@ -2936,8 +2985,25 @@ export class LLVMEmitter {
     }
 
     private emitMethodCallExpression(expr: AST.MethodCallExpression): string {
-        const selfType = this.getExpressionType(expr.object);
         const methodName = expr.method.value;
+
+        // Lazy iterator chain terminal operations
+        if (this.isIteratorChain(expr)) {
+            if (methodName === "collect") {
+                return this.emitIteratorCollect(expr);
+            }
+            if (methodName === "count") {
+                return this.emitIteratorCount(expr);
+            }
+            if (methodName === "sum") {
+                return this.emitIteratorSum(expr);
+            }
+            if (methodName === "for_each") {
+                return this.emitIteratorForEach(expr);
+            }
+        }
+
+        const selfType = this.getExpressionType(expr.object);
 
         // Vec method calls: v.push(42), v.get(0), v.set(i, val), v.pop(), v.len()
         if (this.isVecType(selfType)) {
@@ -3454,9 +3520,880 @@ export class LLVMEmitter {
         return keyVal;
     }
 
+    // ---- Lazy Iterator Chain Support ----
+
+    /** Check if an expression is part of a lazy iterator chain (contains .iter() in the chain) */
+    private isIteratorChain(expr: AST.Expression): boolean {
+        let current = expr;
+        while (current instanceof AST.MethodCallExpression) {
+            if (current.method.value === "iter") return true;
+            if (["map", "filter", "collect", "count", "sum", "for_each"].includes(current.method.value)) {
+                current = current.object;
+            } else {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** Walk backward through a method chain to extract iterator steps and source */
+    private analyzeIteratorChain(expr: AST.Expression): { source: AST.Expression, sourceKind: "vec" | "hashmap", steps: { kind: "map" | "filter", closure: AST.Expression }[] } | null {
+        const steps: { kind: "map" | "filter", closure: AST.Expression }[] = [];
+        let current = expr;
+
+        while (current instanceof AST.MethodCallExpression) {
+            const method = current.method.value;
+            if (method === "map" || method === "filter") {
+                steps.unshift({ kind: method as "map" | "filter", closure: current.arguments[0] });
+                current = current.object;
+            } else if (method === "iter") {
+                current = current.object;
+                break;
+            } else if (["collect", "count", "sum", "for_each"].includes(method)) {
+                current = current.object;
+            } else {
+                return null;
+            }
+        }
+
+        const sourceType = this.getExpressionType(current);
+        let sourceKind: "vec" | "hashmap";
+        if (this.isVecType(sourceType)) sourceKind = "vec";
+        else if (this.isHashMapType(sourceType)) sourceKind = "hashmap";
+        else return null;
+
+        return { source: current, sourceKind, steps };
+    }
+
+    /** Get the source Vec/HashMap alloca pointer from an expression */
+    private getCollectionSelfPtr(expr: AST.Expression): string {
+        if (expr instanceof AST.Identifier) {
+            const addr = this.locals.get(expr.value);
+            if (addr) return addr;
+        }
+        return this.emitExpression(expr);
+    }
+
+    /** Emit a fused iterator chain that collects into a new Vec */
+    private emitIteratorCollect(expr: AST.MethodCallExpression): string {
+        const chain = this.analyzeIteratorChain(expr);
+        if (!chain) return "0";
+
+        const vecStructType = this.getVecStructType();
+        const selfPtr = this.getCollectionSelfPtr(chain.source);
+
+        // Determine source element type
+        let elemType: string;
+        if (chain.sourceKind === "vec") {
+            elemType = this.getVecElemType(chain.source);
+        } else {
+            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+        }
+
+        // Emit all closures before the loop (they may capture variables)
+        const closureAddrs: string[] = [];
+        const closureOutputTypes: string[] = [];
+        let currentElemType = elemType;
+
+        for (const step of chain.steps) {
+            const closureVal = this.emitExpression(step.closure);
+            const closureAddr = this.nextRegister();
+            this.output += `  ${closureAddr} = alloca { i8*, i8* }\n`;
+            this.output += `  store { i8*, i8* } ${closureVal}, { i8*, i8* }* ${closureAddr}\n`;
+            closureAddrs.push(closureAddr);
+
+            if (step.kind === "map") {
+                // Determine output type from closure return type
+                let outputType = currentElemType;
+                if (step.closure instanceof AST.ClosureExpression && step.closure.returnType) {
+                    outputType = this.mapType(step.closure.returnType);
+                }
+                closureOutputTypes.push(outputType);
+                currentElemType = outputType;
+            } else {
+                closureOutputTypes.push(currentElemType);
+            }
+        }
+
+        const finalElemType = currentElemType;
+        const finalElemSize = this.sizeOfLLVMType(finalElemType);
+
+        // Create output Vec
+        const newVecReg = this.nextRegister();
+        this.output += `  ${newVecReg} = call ${vecStructType} @fs_vec_new(i32 ${finalElemSize})\n`;
+        const newVecAddr = this.nextRegister();
+        this.output += `  ${newVecAddr} = alloca ${vecStructType}\n`;
+        this.output += `  store ${vecStructType} ${newVecReg}, ${vecStructType}* ${newVecAddr}\n`;
+
+        // Emit source iteration setup
+        const labelId = this.labelCounter++;
+
+        if (chain.sourceKind === "vec") {
+            this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, newVecAddr, finalElemType, labelId, "collect");
+        } else {
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, newVecAddr, finalElemType, labelId, "collect");
+        }
+
+        // Return new Vec
+        const resultVec = this.nextRegister();
+        this.output += `  ${resultVec} = load ${vecStructType}, ${vecStructType}* ${newVecAddr}\n`;
+
+        // Track element type for downstream
+        this.lastMapOutputElemType = finalElemType;
+
+        return resultVec;
+    }
+
+    /** Emit a fused iterator chain that counts matching elements */
+    private emitIteratorCount(expr: AST.MethodCallExpression): string {
+        const chain = this.analyzeIteratorChain(expr);
+        if (!chain) return "0";
+
+        const vecStructType = this.getVecStructType();
+        const selfPtr = this.getCollectionSelfPtr(chain.source);
+
+        let elemType: string;
+        if (chain.sourceKind === "vec") {
+            elemType = this.getVecElemType(chain.source);
+        } else {
+            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+        }
+
+        // Emit closures
+        const closureAddrs: string[] = [];
+        const closureOutputTypes: string[] = [];
+        let currentElemType = elemType;
+
+        for (const step of chain.steps) {
+            const closureVal = this.emitExpression(step.closure);
+            const closureAddr = this.nextRegister();
+            this.output += `  ${closureAddr} = alloca { i8*, i8* }\n`;
+            this.output += `  store { i8*, i8* } ${closureVal}, { i8*, i8* }* ${closureAddr}\n`;
+            closureAddrs.push(closureAddr);
+            if (step.kind === "map") {
+                let outputType = currentElemType;
+                if (step.closure instanceof AST.ClosureExpression && step.closure.returnType) {
+                    outputType = this.mapType(step.closure.returnType);
+                }
+                closureOutputTypes.push(outputType);
+                currentElemType = outputType;
+            } else {
+                closureOutputTypes.push(currentElemType);
+            }
+        }
+
+        // Counter
+        const countAddr = this.nextRegister();
+        this.output += `  ${countAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${countAddr}\n`;
+
+        const labelId = this.labelCounter++;
+        if (chain.sourceKind === "vec") {
+            this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, countAddr, currentElemType, labelId, "count");
+        } else {
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, countAddr, currentElemType, labelId, "count");
+        }
+
+        const result = this.nextRegister();
+        this.output += `  ${result} = load i32, i32* ${countAddr}\n`;
+        return result;
+    }
+
+    /** Emit a fused iterator chain that sums elements */
+    private emitIteratorSum(expr: AST.MethodCallExpression): string {
+        const chain = this.analyzeIteratorChain(expr);
+        if (!chain) return "0";
+
+        const vecStructType = this.getVecStructType();
+        const selfPtr = this.getCollectionSelfPtr(chain.source);
+
+        let elemType: string;
+        if (chain.sourceKind === "vec") {
+            elemType = this.getVecElemType(chain.source);
+        } else {
+            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+        }
+
+        const closureAddrs: string[] = [];
+        const closureOutputTypes: string[] = [];
+        let currentElemType = elemType;
+
+        for (const step of chain.steps) {
+            const closureVal = this.emitExpression(step.closure);
+            const closureAddr = this.nextRegister();
+            this.output += `  ${closureAddr} = alloca { i8*, i8* }\n`;
+            this.output += `  store { i8*, i8* } ${closureVal}, { i8*, i8* }* ${closureAddr}\n`;
+            closureAddrs.push(closureAddr);
+            if (step.kind === "map") {
+                let outputType = currentElemType;
+                if (step.closure instanceof AST.ClosureExpression && step.closure.returnType) {
+                    outputType = this.mapType(step.closure.returnType);
+                }
+                closureOutputTypes.push(outputType);
+                currentElemType = outputType;
+            } else {
+                closureOutputTypes.push(currentElemType);
+            }
+        }
+
+        // Sum accumulator
+        const sumAddr = this.nextRegister();
+        this.output += `  ${sumAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${sumAddr}\n`;
+
+        const labelId = this.labelCounter++;
+        if (chain.sourceKind === "vec") {
+            this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, sumAddr, currentElemType, labelId, "sum");
+        } else {
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, sumAddr, currentElemType, labelId, "sum");
+        }
+
+        const result = this.nextRegister();
+        this.output += `  ${result} = load i32, i32* ${sumAddr}\n`;
+        return result;
+    }
+
+    /** Emit a fused iterator chain for for_each */
+    private emitIteratorForEach(expr: AST.MethodCallExpression): string {
+        const chain = this.analyzeIteratorChain(expr.object);
+        if (!chain) return "0";
+
+        const vecStructType = this.getVecStructType();
+        const selfPtr = this.getCollectionSelfPtr(chain.source);
+
+        let elemType: string;
+        if (chain.sourceKind === "vec") {
+            elemType = this.getVecElemType(chain.source);
+        } else {
+            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+        }
+
+        const closureAddrs: string[] = [];
+        const closureOutputTypes: string[] = [];
+        let currentElemType = elemType;
+
+        for (const step of chain.steps) {
+            const closureVal = this.emitExpression(step.closure);
+            const closureAddr = this.nextRegister();
+            this.output += `  ${closureAddr} = alloca { i8*, i8* }\n`;
+            this.output += `  store { i8*, i8* } ${closureVal}, { i8*, i8* }* ${closureAddr}\n`;
+            closureAddrs.push(closureAddr);
+            if (step.kind === "map") {
+                let outputType = currentElemType;
+                if (step.closure instanceof AST.ClosureExpression && step.closure.returnType) {
+                    outputType = this.mapType(step.closure.returnType);
+                }
+                closureOutputTypes.push(outputType);
+                currentElemType = outputType;
+            } else {
+                closureOutputTypes.push(currentElemType);
+            }
+        }
+
+        // Emit the for_each closure
+        const foreachClosureVal = this.emitExpression(expr.arguments[0]);
+        const foreachAddr = this.nextRegister();
+        this.output += `  ${foreachAddr} = alloca { i8*, i8* }\n`;
+        this.output += `  store { i8*, i8* } ${foreachClosureVal}, { i8*, i8* }* ${foreachAddr}\n`;
+
+        // Add for_each as a final "map" step (void return)
+        closureAddrs.push(foreachAddr);
+        closureOutputTypes.push("void");
+        chain.steps.push({ kind: "map", closure: expr.arguments[0] });
+
+        const labelId = this.labelCounter++;
+        if (chain.sourceKind === "vec") {
+            this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, null, currentElemType, labelId, "for_each");
+        } else {
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, null, currentElemType, labelId, "for_each");
+        }
+
+        return "0";
+    }
+
+    /** Emit the body of a fused iterator loop over a Vec source */
+    private emitFusedVecIteratorLoop(
+        selfPtr: string, vecStructType: string, elemType: string,
+        steps: { kind: "map" | "filter", closure: AST.Expression }[],
+        closureAddrs: string[], closureOutputTypes: string[],
+        outputAddr: string | null, finalElemType: string,
+        labelId: number, mode: "collect" | "count" | "sum" | "for_each" | "for_body",
+        forBodyCallback?: () => void
+    ) {
+        const condLabel = `iter_cond_${labelId}`;
+        const bodyLabel = `iter_body_${labelId}`;
+        const endLabel = `iter_end_${labelId}`;
+
+        // Get length
+        const lenReg = this.nextRegister();
+        this.output += `  ${lenReg} = call i32 @fs_vec_len(${vecStructType}* ${selfPtr})\n`;
+
+        // Index counter
+        const idxAddr = this.nextRegister();
+        this.output += `  ${idxAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${idxAddr}\n`;
+
+        // Condition
+        this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+        const curIdx = this.nextRegister();
+        this.output += `  ${curIdx} = load i32, i32* ${idxAddr}\n`;
+        const cmp = this.nextRegister();
+        this.output += `  ${cmp} = icmp slt i32 ${curIdx}, ${lenReg}\n`;
+        this.output += `  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
+
+        // Get element from Vec
+        const rawElem = this.nextRegister();
+        this.output += `  ${rawElem} = call i8* @fs_vec_get(${vecStructType}* ${selfPtr}, i32 ${curIdx})\n`;
+        const castElem = this.nextRegister();
+        this.output += `  ${castElem} = bitcast i8* ${rawElem} to ${elemType}*\n`;
+        let currentVal = this.nextRegister();
+        this.output += `  ${currentVal} = load ${elemType}, ${elemType}* ${castElem}\n`;
+        let currentType = elemType;
+
+        // Apply chain steps
+        let nextLabel = `iter_next_${labelId}`;
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            const closureAddr = closureAddrs[i];
+            const outputType = closureOutputTypes[i];
+
+            if (step.kind === "filter") {
+                // Call filter predicate
+                const cl = this.nextRegister();
+                this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                const envP = this.nextRegister();
+                this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                const fnP = this.nextRegister();
+                this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                const typedFn = this.nextRegister();
+                this.output += `  ${typedFn} = bitcast i8* ${fnP} to i1 (i8*, ${currentType})*\n`;
+                const predResult = this.nextRegister();
+                this.output += `  ${predResult} = call i1 ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+
+                // Branch: if false, skip to next iteration
+                const passLabel = `iter_pass_${labelId}_${i}`;
+                this.output += `  br i1 ${predResult}, label %${passLabel}, label %${nextLabel}\n${passLabel}:\n`;
+            } else if (step.kind === "map") {
+                if (outputType === "void") {
+                    // for_each: call closure but don't update currentVal
+                    const cl = this.nextRegister();
+                    this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                    const envP = this.nextRegister();
+                    this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                    const fnP = this.nextRegister();
+                    this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                    const typedFn = this.nextRegister();
+                    this.output += `  ${typedFn} = bitcast i8* ${fnP} to void (i8*, ${currentType})*\n`;
+                    this.output += `  call void ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                } else {
+                    // map: call closure and update currentVal
+                    const cl = this.nextRegister();
+                    this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                    const envP = this.nextRegister();
+                    this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                    const fnP = this.nextRegister();
+                    this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                    const typedFn = this.nextRegister();
+                    this.output += `  ${typedFn} = bitcast i8* ${fnP} to ${outputType} (i8*, ${currentType})*\n`;
+                    const result = this.nextRegister();
+                    this.output += `  ${result} = call ${outputType} ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                    currentVal = result;
+                    currentType = outputType;
+                }
+            }
+        }
+
+        // Terminal operation
+        if (mode === "collect" && outputAddr) {
+            const tmpResult = this.nextRegister();
+            this.output += `  ${tmpResult} = alloca ${finalElemType}\n`;
+            this.output += `  store ${finalElemType} ${currentVal}, ${finalElemType}* ${tmpResult}\n`;
+            const castResult = this.nextRegister();
+            this.output += `  ${castResult} = bitcast ${finalElemType}* ${tmpResult} to i8*\n`;
+            this.output += `  call void @fs_vec_push(${this.getVecStructType()}* ${outputAddr}, i8* ${castResult})\n`;
+        } else if (mode === "count" && outputAddr) {
+            const curCount = this.nextRegister();
+            this.output += `  ${curCount} = load i32, i32* ${outputAddr}\n`;
+            const newCount = this.nextRegister();
+            this.output += `  ${newCount} = add i32 ${curCount}, 1\n`;
+            this.output += `  store i32 ${newCount}, i32* ${outputAddr}\n`;
+        } else if (mode === "sum" && outputAddr) {
+            const curSum = this.nextRegister();
+            this.output += `  ${curSum} = load i32, i32* ${outputAddr}\n`;
+            const newSum = this.nextRegister();
+            this.output += `  ${newSum} = add i32 ${curSum}, ${currentVal}\n`;
+            this.output += `  store i32 ${newSum}, i32* ${outputAddr}\n`;
+        } else if (mode === "for_body" && forBodyCallback) {
+            forBodyCallback();
+        }
+
+        // Next iteration
+        this.output += `  br label %${nextLabel}\n${nextLabel}:\n`;
+
+        // Increment index
+        const loadIdx = this.nextRegister();
+        this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
+        const incIdx = this.nextRegister();
+        this.output += `  ${incIdx} = add i32 ${loadIdx}, 1\n`;
+        this.output += `  store i32 ${incIdx}, i32* ${idxAddr}\n`;
+        this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+    }
+
+    /** Emit the body of a fused iterator loop over a HashMap source (key iteration) */
+    private emitFusedHashMapIteratorLoop(
+        selfPtr: string, keyType: string,
+        steps: { kind: "map" | "filter", closure: AST.Expression }[],
+        closureAddrs: string[], closureOutputTypes: string[],
+        outputAddr: string | null, finalElemType: string,
+        labelId: number, mode: "collect" | "count" | "sum" | "for_each" | "for_body",
+        forBodyCallback?: () => void
+    ) {
+        const hmStructType = this.getHashMapStructType();
+        const condLabel = `iter_cond_${labelId}`;
+        const bodyLabel = `iter_body_${labelId}`;
+        const endLabel = `iter_end_${labelId}`;
+
+        // Cursor
+        const cursorAddr = this.nextRegister();
+        this.output += `  ${cursorAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${cursorAddr}\n`;
+
+        // Condition: call iter_next
+        this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+        const rawKeyPtr = this.nextRegister();
+        this.output += `  ${rawKeyPtr} = call i8* @fs_hashmap_iter_next(${hmStructType}* ${selfPtr}, i32* ${cursorAddr})\n`;
+        const isNull = this.nextRegister();
+        this.output += `  ${isNull} = icmp eq i8* ${rawKeyPtr}, null\n`;
+        this.output += `  br i1 ${isNull}, label %${endLabel}, label %${bodyLabel}\n${bodyLabel}:\n`;
+
+        // Load key value
+        const castKeyPtr = this.nextRegister();
+        this.output += `  ${castKeyPtr} = bitcast i8* ${rawKeyPtr} to ${keyType}*\n`;
+        let currentVal = this.nextRegister();
+        this.output += `  ${currentVal} = load ${keyType}, ${keyType}* ${castKeyPtr}\n`;
+        let currentType = keyType;
+
+        // Apply chain steps (same as Vec)
+        let nextLabel = `iter_next_${labelId}`;
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            const closureAddr = closureAddrs[i];
+            const outputType = closureOutputTypes[i];
+
+            if (step.kind === "filter") {
+                const cl = this.nextRegister();
+                this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                const envP = this.nextRegister();
+                this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                const fnP = this.nextRegister();
+                this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                const typedFn = this.nextRegister();
+                this.output += `  ${typedFn} = bitcast i8* ${fnP} to i1 (i8*, ${currentType})*\n`;
+                const predResult = this.nextRegister();
+                this.output += `  ${predResult} = call i1 ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                const passLabel = `iter_pass_${labelId}_${i}`;
+                this.output += `  br i1 ${predResult}, label %${passLabel}, label %${nextLabel}\n${passLabel}:\n`;
+            } else if (step.kind === "map") {
+                if (outputType === "void") {
+                    const cl = this.nextRegister();
+                    this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                    const envP = this.nextRegister();
+                    this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                    const fnP = this.nextRegister();
+                    this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                    const typedFn = this.nextRegister();
+                    this.output += `  ${typedFn} = bitcast i8* ${fnP} to void (i8*, ${currentType})*\n`;
+                    this.output += `  call void ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                } else {
+                    const cl = this.nextRegister();
+                    this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                    const envP = this.nextRegister();
+                    this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                    const fnP = this.nextRegister();
+                    this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                    const typedFn = this.nextRegister();
+                    this.output += `  ${typedFn} = bitcast i8* ${fnP} to ${outputType} (i8*, ${currentType})*\n`;
+                    const result = this.nextRegister();
+                    this.output += `  ${result} = call ${outputType} ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                    currentVal = result;
+                    currentType = outputType;
+                }
+            }
+        }
+
+        // Terminal operation
+        if (mode === "collect" && outputAddr) {
+            const vecStructType = this.getVecStructType();
+            const tmpResult = this.nextRegister();
+            this.output += `  ${tmpResult} = alloca ${finalElemType}\n`;
+            this.output += `  store ${finalElemType} ${currentVal}, ${finalElemType}* ${tmpResult}\n`;
+            const castResult = this.nextRegister();
+            this.output += `  ${castResult} = bitcast ${finalElemType}* ${tmpResult} to i8*\n`;
+            this.output += `  call void @fs_vec_push(${vecStructType}* ${outputAddr}, i8* ${castResult})\n`;
+        } else if (mode === "count" && outputAddr) {
+            const curCount = this.nextRegister();
+            this.output += `  ${curCount} = load i32, i32* ${outputAddr}\n`;
+            const newCount = this.nextRegister();
+            this.output += `  ${newCount} = add i32 ${curCount}, 1\n`;
+            this.output += `  store i32 ${newCount}, i32* ${outputAddr}\n`;
+        } else if (mode === "sum" && outputAddr) {
+            const curSum = this.nextRegister();
+            this.output += `  ${curSum} = load i32, i32* ${outputAddr}\n`;
+            const newSum = this.nextRegister();
+            this.output += `  ${newSum} = add i32 ${curSum}, ${currentVal}\n`;
+            this.output += `  store i32 ${newSum}, i32* ${outputAddr}\n`;
+        } else if (mode === "for_body" && forBodyCallback) {
+            forBodyCallback();
+        }
+
+        this.output += `  br label %${nextLabel}\n${nextLabel}:\n`;
+        this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+    }
+
+    /** Emit a fused iterator chain as a for-loop body */
+    private emitIteratorForLoop(stmt: AST.ForStatement) {
+        const chain = this.analyzeIteratorChain(stmt.iterable);
+        if (!chain) return;
+
+        const vecStructType = this.getVecStructType();
+        const selfPtr = this.getCollectionSelfPtr(chain.source);
+        const varName = stmt.variable.value;
+
+        let elemType: string;
+        if (chain.sourceKind === "vec") {
+            elemType = this.getVecElemType(chain.source);
+        } else {
+            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+        }
+
+        // Emit closures
+        const closureAddrs: string[] = [];
+        const closureOutputTypes: string[] = [];
+        let currentElemType = elemType;
+
+        for (const step of chain.steps) {
+            const closureVal = this.emitExpression(step.closure);
+            const closureAddr = this.nextRegister();
+            this.output += `  ${closureAddr} = alloca { i8*, i8* }\n`;
+            this.output += `  store { i8*, i8* } ${closureVal}, { i8*, i8* }* ${closureAddr}\n`;
+            closureAddrs.push(closureAddr);
+            if (step.kind === "map") {
+                let outputType = currentElemType;
+                if (step.closure instanceof AST.ClosureExpression && step.closure.returnType) {
+                    outputType = this.mapType(step.closure.returnType);
+                }
+                closureOutputTypes.push(outputType);
+                currentElemType = outputType;
+            } else {
+                closureOutputTypes.push(currentElemType);
+            }
+        }
+
+        // Allocate loop variable
+        const varAddr = `%${varName}.addr`;
+        this.output += `  ${varAddr} = alloca ${currentElemType}\n`;
+        this.locals.set(varName, varAddr);
+        this.localTypes.set(varName, currentElemType);
+
+        const labelId = this.labelCounter++;
+
+        const forBodyCallback = () => {
+            // Store current value to loop variable (currentVal is in scope from the fused loop)
+            // We handle this by making the for_body mode store the final value
+            this.pushRcScope();
+            stmt.body.statements.forEach(s => this.emitStatement(s));
+            this.emitScopeRelease();
+            this.popRcScope();
+        };
+
+        if (chain.sourceKind === "vec") {
+            this.emitFusedVecIteratorLoopForBody(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, varAddr, currentElemType, labelId, stmt);
+        } else {
+            this.emitFusedHashMapIteratorLoopForBody(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, varAddr, currentElemType, labelId, stmt);
+        }
+    }
+
+    /** Specialized fused Vec iterator loop that stores to a variable and executes for-body */
+    private emitFusedVecIteratorLoopForBody(
+        selfPtr: string, vecStructType: string, elemType: string,
+        steps: { kind: "map" | "filter", closure: AST.Expression }[],
+        closureAddrs: string[], closureOutputTypes: string[],
+        varAddr: string, finalElemType: string,
+        labelId: number, stmt: AST.ForStatement
+    ) {
+        const condLabel = `iter_cond_${labelId}`;
+        const bodyLabel = `iter_body_${labelId}`;
+        const endLabel = `iter_end_${labelId}`;
+        const nextLabel = `iter_next_${labelId}`;
+
+        const lenReg = this.nextRegister();
+        this.output += `  ${lenReg} = call i32 @fs_vec_len(${vecStructType}* ${selfPtr})\n`;
+
+        const idxAddr = this.nextRegister();
+        this.output += `  ${idxAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${idxAddr}\n`;
+
+        this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+        const curIdx = this.nextRegister();
+        this.output += `  ${curIdx} = load i32, i32* ${idxAddr}\n`;
+        const cmp = this.nextRegister();
+        this.output += `  ${cmp} = icmp slt i32 ${curIdx}, ${lenReg}\n`;
+        this.output += `  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
+
+        const rawElem = this.nextRegister();
+        this.output += `  ${rawElem} = call i8* @fs_vec_get(${vecStructType}* ${selfPtr}, i32 ${curIdx})\n`;
+        const castElem = this.nextRegister();
+        this.output += `  ${castElem} = bitcast i8* ${rawElem} to ${elemType}*\n`;
+        let currentVal = this.nextRegister();
+        this.output += `  ${currentVal} = load ${elemType}, ${elemType}* ${castElem}\n`;
+        let currentType = elemType;
+
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            const closureAddr = closureAddrs[i];
+            const outputType = closureOutputTypes[i];
+
+            if (step.kind === "filter") {
+                const cl = this.nextRegister();
+                this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                const envP = this.nextRegister();
+                this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                const fnP = this.nextRegister();
+                this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                const typedFn = this.nextRegister();
+                this.output += `  ${typedFn} = bitcast i8* ${fnP} to i1 (i8*, ${currentType})*\n`;
+                const predResult = this.nextRegister();
+                this.output += `  ${predResult} = call i1 ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                const passLabel = `iter_pass_${labelId}_${i}`;
+                this.output += `  br i1 ${predResult}, label %${passLabel}, label %${nextLabel}\n${passLabel}:\n`;
+            } else if (step.kind === "map") {
+                const cl = this.nextRegister();
+                this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                const envP = this.nextRegister();
+                this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                const fnP = this.nextRegister();
+                this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                const typedFn = this.nextRegister();
+                this.output += `  ${typedFn} = bitcast i8* ${fnP} to ${outputType} (i8*, ${currentType})*\n`;
+                const result = this.nextRegister();
+                this.output += `  ${result} = call ${outputType} ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                currentVal = result;
+                currentType = outputType;
+            }
+        }
+
+        // Store to loop variable and run body
+        this.output += `  store ${finalElemType} ${currentVal}, ${finalElemType}* ${varAddr}\n`;
+        this.pushRcScope();
+        stmt.body.statements.forEach(s => this.emitStatement(s));
+        this.emitScopeRelease();
+        this.popRcScope();
+
+        this.output += `  br label %${nextLabel}\n${nextLabel}:\n`;
+        const loadIdx = this.nextRegister();
+        this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
+        const incIdx = this.nextRegister();
+        this.output += `  ${incIdx} = add i32 ${loadIdx}, 1\n`;
+        this.output += `  store i32 ${incIdx}, i32* ${idxAddr}\n`;
+        this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+    }
+
+    /** Specialized fused HashMap iterator loop for for-body */
+    private emitFusedHashMapIteratorLoopForBody(
+        selfPtr: string, keyType: string,
+        steps: { kind: "map" | "filter", closure: AST.Expression }[],
+        closureAddrs: string[], closureOutputTypes: string[],
+        varAddr: string, finalElemType: string,
+        labelId: number, stmt: AST.ForStatement
+    ) {
+        const hmStructType = this.getHashMapStructType();
+        const condLabel = `iter_cond_${labelId}`;
+        const bodyLabel = `iter_body_${labelId}`;
+        const endLabel = `iter_end_${labelId}`;
+        const nextLabel = `iter_next_${labelId}`;
+
+        const cursorAddr = this.nextRegister();
+        this.output += `  ${cursorAddr} = alloca i32\n`;
+        this.output += `  store i32 0, i32* ${cursorAddr}\n`;
+
+        this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+        const rawKeyPtr = this.nextRegister();
+        this.output += `  ${rawKeyPtr} = call i8* @fs_hashmap_iter_next(${hmStructType}* ${selfPtr}, i32* ${cursorAddr})\n`;
+        const isNull = this.nextRegister();
+        this.output += `  ${isNull} = icmp eq i8* ${rawKeyPtr}, null\n`;
+        this.output += `  br i1 ${isNull}, label %${endLabel}, label %${bodyLabel}\n${bodyLabel}:\n`;
+
+        const castKeyPtr = this.nextRegister();
+        this.output += `  ${castKeyPtr} = bitcast i8* ${rawKeyPtr} to ${keyType}*\n`;
+        let currentVal = this.nextRegister();
+        this.output += `  ${currentVal} = load ${keyType}, ${keyType}* ${castKeyPtr}\n`;
+        let currentType = keyType;
+
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
+            const closureAddr = closureAddrs[i];
+            const outputType = closureOutputTypes[i];
+
+            if (step.kind === "filter") {
+                const cl = this.nextRegister();
+                this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                const envP = this.nextRegister();
+                this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                const fnP = this.nextRegister();
+                this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                const typedFn = this.nextRegister();
+                this.output += `  ${typedFn} = bitcast i8* ${fnP} to i1 (i8*, ${currentType})*\n`;
+                const predResult = this.nextRegister();
+                this.output += `  ${predResult} = call i1 ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                const passLabel = `iter_pass_${labelId}_${i}`;
+                this.output += `  br i1 ${predResult}, label %${passLabel}, label %${nextLabel}\n${passLabel}:\n`;
+            } else if (step.kind === "map") {
+                const cl = this.nextRegister();
+                this.output += `  ${cl} = load { i8*, i8* }, { i8*, i8* }* ${closureAddr}\n`;
+                const envP = this.nextRegister();
+                this.output += `  ${envP} = extractvalue { i8*, i8* } ${cl}, 0\n`;
+                const fnP = this.nextRegister();
+                this.output += `  ${fnP} = extractvalue { i8*, i8* } ${cl}, 1\n`;
+                const typedFn = this.nextRegister();
+                this.output += `  ${typedFn} = bitcast i8* ${fnP} to ${outputType} (i8*, ${currentType})*\n`;
+                const result = this.nextRegister();
+                this.output += `  ${result} = call ${outputType} ${typedFn}(i8* ${envP}, ${currentType} ${currentVal})\n`;
+                currentVal = result;
+                currentType = outputType;
+            }
+        }
+
+        this.output += `  store ${finalElemType} ${currentVal}, ${finalElemType}* ${varAddr}\n`;
+        this.pushRcScope();
+        stmt.body.statements.forEach(s => this.emitStatement(s));
+        this.emitScopeRelease();
+        this.popRcScope();
+
+        this.output += `  br label %${nextLabel}\n${nextLabel}:\n`;
+        this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+    }
+
+    // ---- IntoIterator Support ----
+
+    /** Try to emit a for-loop over a custom type using IntoIterator trait dispatch */
+    private tryEmitIntoIteratorForLoop(stmt: AST.ForStatement): boolean {
+        const iterableType = this.getExpressionType(stmt.iterable);
+        if (!iterableType.startsWith("%struct.")) return false;
+
+        const structName = iterableType.replace("%struct.", "");
+
+        // Search impl blocks for one targeting this struct with an into_iter method
+        for (const [key, impl] of this.implBlocks) {
+            if (impl.traitName.value === "IntoIterator") {
+                const implTarget = this.getImplTargetTypeName(impl.targetType.value);
+                if (implTarget === structName) {
+                    const intoIterMethod = impl.methods.find(m => m.name === "into_iter");
+                    if (!intoIterMethod) continue;
+
+                    // Call into_iter to get a Vec
+                    const funcName = `IntoIterator_${structName}_into_iter`;
+                    const selfExpr = stmt.iterable;
+                    const selfVal = this.emitExpression(selfExpr);
+
+                    // The into_iter method takes self by pointer (struct*)
+                    const retType = this.functionReturnTypes.get(funcName) || this.getVecStructType();
+                    const reg = this.nextRegister();
+
+                    if (iterableType.endsWith("*")) {
+                        this.output += `  ${reg} = call ${retType} @${funcName}(${iterableType} ${selfVal})\n`;
+                    } else {
+                        // Need to pass pointer — alloca, store, then pass
+                        const tmpAddr = this.nextRegister();
+                        this.output += `  ${tmpAddr} = alloca ${iterableType}\n`;
+                        this.output += `  store ${iterableType} ${selfVal}, ${iterableType}* ${tmpAddr}\n`;
+                        this.output += `  ${reg} = call ${retType} @${funcName}(${iterableType}* ${tmpAddr})\n`;
+                    }
+
+                    // Store the Vec result and iterate it
+                    const vecAddr = this.nextRegister();
+                    this.output += `  ${vecAddr} = alloca ${retType}\n`;
+                    this.output += `  store ${retType} ${reg}, ${retType}* ${vecAddr}\n`;
+
+                    // Try to determine element type from the into_iter return type
+                    // For now, default to i32
+                    let elemType = "i32";
+                    if (intoIterMethod.returnType) {
+                        const retTypeStr = intoIterMethod.returnType.toString();
+                        // If return type is Vec<int>, Vec<string>, etc., extract element
+                        if (retTypeStr.startsWith("Vec<") && retTypeStr.endsWith(">")) {
+                            const inner = retTypeStr.slice(4, -1);
+                            elemType = this.mapType(new (AST as any).TypeIdentifier({type: 0, literal: inner, line: 0, column: 0}, inner));
+                        }
+                    }
+
+                    // Emit Vec for-loop using the result
+                    const varName = stmt.variable.value;
+                    const vecStructType = this.getVecStructType();
+                    const labelId = this.labelCounter++;
+                    const condLabel = `foriter_cond_${labelId}`;
+                    const bodyLabel = `foriter_body_${labelId}`;
+                    const endLabel = `foriter_end_${labelId}`;
+
+                    const lenReg2 = this.nextRegister();
+                    this.output += `  ${lenReg2} = call i32 @fs_vec_len(${vecStructType}* ${vecAddr})\n`;
+
+                    const idxAddr = this.nextRegister();
+                    this.output += `  ${idxAddr} = alloca i32\n`;
+                    this.output += `  store i32 0, i32* ${idxAddr}\n`;
+
+                    const varAddr = `%${varName}.addr`;
+                    this.output += `  ${varAddr} = alloca ${elemType}\n`;
+                    this.locals.set(varName, varAddr);
+                    this.localTypes.set(varName, elemType);
+
+                    this.output += `  br label %${condLabel}\n${condLabel}:\n`;
+                    const curIdx = this.nextRegister();
+                    this.output += `  ${curIdx} = load i32, i32* ${idxAddr}\n`;
+                    const cmpReg = this.nextRegister();
+                    this.output += `  ${cmpReg} = icmp slt i32 ${curIdx}, ${lenReg2}\n`;
+                    this.output += `  br i1 ${cmpReg}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
+
+                    this.pushRcScope();
+                    const rawPtr = this.nextRegister();
+                    this.output += `  ${rawPtr} = call i8* @fs_vec_get(${vecStructType}* ${vecAddr}, i32 ${curIdx})\n`;
+                    const castPtr = this.nextRegister();
+                    this.output += `  ${castPtr} = bitcast i8* ${rawPtr} to ${elemType}*\n`;
+                    const elemVal = this.nextRegister();
+                    this.output += `  ${elemVal} = load ${elemType}, ${elemType}* ${castPtr}\n`;
+                    this.output += `  store ${elemType} ${elemVal}, ${elemType}* ${varAddr}\n`;
+
+                    stmt.body.statements.forEach(s => this.emitStatement(s));
+                    this.emitScopeRelease();
+                    this.popRcScope();
+
+                    const loadIdx = this.nextRegister();
+                    this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
+                    const incIdx = this.nextRegister();
+                    this.output += `  ${incIdx} = add i32 ${loadIdx}, 1\n`;
+                    this.output += `  store i32 ${incIdx}, i32* ${idxAddr}\n`;
+                    this.output += `  br label %${condLabel}\n${endLabel}:\n`;
+
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private getMethodCallReturnType(expr: AST.MethodCallExpression): string {
-        const selfType = this.getExpressionType(expr.object);
         const methodName = expr.method.value;
+
+        // Lazy iterator chain terminal operations
+        if (this.isIteratorChain(expr)) {
+            if (methodName === "collect") return this.getVecStructType();
+            if (methodName === "count" || methodName === "sum") return "i32";
+            if (methodName === "for_each") return "void";
+            // Intermediate operations (iter, map, filter) don't have a real LLVM type
+            // They are consumed by terminals at emit time
+            return "i32";
+        }
+
+        const selfType = this.getExpressionType(expr.object);
 
         // Vec methods
         if (this.isVecType(selfType)) {

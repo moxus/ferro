@@ -21,6 +21,8 @@ export class Analyzer {
     private traitImpls: Map<string, Set<string>> = new Map();  // traitName -> Set of target types
     // Track function type constraints for call-site validation
     private functionConstraints: Map<string, Map<string, string[]>> = new Map();  // funcName -> typeConstraints
+    // Store impl blocks for IntoIterator lookup
+    private implBlockStore: AST.ImplBlock[] = [];
 
     public analyze(program: AST.Program, initialScope?: SymbolTable, modulePath: string = "") {
         this.currentModulePath = modulePath;
@@ -77,6 +79,7 @@ export class Analyzer {
                 this.traitImpls.set(traitName, new Set());
             }
             this.traitImpls.get(traitName)!.add(targetType);
+            this.implBlockStore.push(stmt);
         } else if (stmt instanceof AST.ForStatement) {
             this.visitForStatement(stmt);
         }
@@ -94,6 +97,18 @@ export class Analyzer {
                 elemType = iterableType.args[0];
             } else if (iterableType.kind === "generic_inst" && iterableType.name === "HashMap" && iterableType.args.length >= 1) {
                 elemType = iterableType.args[0]; // Key type
+            } else if (iterableType.kind === "generic_inst" && iterableType.name === "Iterator" && iterableType.args.length > 0) {
+                // Lazy iterator chain: element type from Iterator<T>
+                elemType = iterableType.args[0];
+            } else if (iterableType.kind === "struct") {
+                // User-defined IntoIterator: look for into_iter impl
+                const structName = iterableType.name;
+                const intoIterImpl = this.findIntoIteratorImpl(structName);
+                if (intoIterImpl) {
+                    elemType = intoIterImpl;
+                } else {
+                    elemType = UnknownType;
+                }
             } else {
                 elemType = UnknownType;
             }
@@ -104,6 +119,27 @@ export class Analyzer {
         this.scope.define(stmt.variable.value, elemType, false, stmt.token.line, this.currentModulePath);
         stmt.body.statements.forEach(s => this.visitStatement(s));
         this.scope = prevScope;
+    }
+
+    /** Look for an IntoIterator impl for the given struct type. Returns the element type if found. */
+    private findIntoIteratorImpl(structName: string): Type | null {
+        // Check if IntoIterator trait exists and has this struct as a target
+        const intoIterImpls = this.traitImpls.get("IntoIterator");
+        if (!intoIterImpls || !intoIterImpls.has(structName)) return null;
+
+        // Find the impl block to get the into_iter return type
+        for (const impl of this.implBlockStore) {
+            if (impl.traitName.value === "IntoIterator" && impl.targetType.value === structName) {
+                const intoIterMethod = impl.methods.find(m => m.name === "into_iter");
+                if (intoIterMethod && intoIterMethod.returnType) {
+                    const retType = this.resolveType(intoIterMethod.returnType);
+                    if (retType.kind === "generic_inst" && retType.name === "Vec" && retType.args.length > 0) {
+                        return retType.args[0]; // Vec<T> → T
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private visitStructDefinition(stmt: AST.StructDefinition) {
@@ -380,6 +416,12 @@ export class Analyzer {
                 }
             }
 
+            // Math static calls: Math::abs, Math::min, Math::max, etc.
+            if (receiverName === "Math") {
+                expr.arguments.forEach(a => this.visitExpression(a));
+                return IntType;
+            }
+
             return UnknownType;
         }
 
@@ -500,6 +542,10 @@ export class Analyzer {
                 if (methodName === "collect") {
                     return { kind: "generic_inst", name: "Vec", args: [elemType] };
                 }
+                // iter() returns lazy Iterator<T>
+                if (methodName === "iter") {
+                    return { kind: "generic_inst", name: "Iterator", args: [elemType] };
+                }
                 return UnknownType;
             }
 
@@ -513,6 +559,55 @@ export class Analyzer {
                 if (methodName === "contains_key") return BoolType;
                 if (methodName === "keys") return { kind: "generic_inst", name: "Vec", args: [keyType] };
                 if (methodName === "values") return { kind: "generic_inst", name: "Vec", args: [valueType] };
+                // iter() returns lazy Iterator over keys
+                if (methodName === "iter") {
+                    return { kind: "generic_inst", name: "Iterator", args: [keyType] };
+                }
+                return UnknownType;
+            }
+
+            // Iterator<T> method return types (lazy iterator chains)
+            if (receiverType.kind === "generic_inst" && receiverType.name === "Iterator" && receiverType.args.length > 0) {
+                const elemType = receiverType.args[0];
+
+                if (methodName === "map" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, [elemType]);
+                        if (closureType.kind === "function") {
+                            return { kind: "generic_inst", name: "Iterator", args: [closureType.returnType] };
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return { kind: "generic_inst", name: "Iterator", args: [elemType] };
+                }
+
+                if (methodName === "filter" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        this.visitClosureExpression(closureArg, [elemType], BoolType);
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return { kind: "generic_inst", name: "Iterator", args: [elemType] };
+                }
+
+                expr.arguments.forEach(a => this.visitExpression(a));
+                if (methodName === "collect") return { kind: "generic_inst", name: "Vec", args: [elemType] };
+                if (methodName === "count" || methodName === "sum") return IntType;
+                if (methodName === "for_each") {
+                    // Visit closure arg with element type inference
+                    if (expr.arguments.length > 0) {
+                        const closureArg = expr.arguments[0];
+                        if (closureArg instanceof AST.ClosureExpression) {
+                            this.visitClosureExpression(closureArg, [elemType]);
+                        }
+                    }
+                    return VoidType;
+                }
                 return UnknownType;
             }
 

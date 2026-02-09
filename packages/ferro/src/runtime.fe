@@ -836,3 +836,76 @@ export fn fs_file_tell(file: *fs_File) -> i64 {
     }
     return result;
 }
+
+// ---- Math Utilities ----
+
+// Absolute value
+export fn fs_math_abs(x: i32) -> i32 {
+    if (x < 0) {
+        return 0 - x;
+    };
+    return x;
+}
+
+// Minimum of two integers
+export fn fs_math_min(a: i32, b: i32) -> i32 {
+    if (a < b) {
+        return a;
+    };
+    return b;
+}
+
+// Maximum of two integers
+export fn fs_math_max(a: i32, b: i32) -> i32 {
+    if (a > b) {
+        return a;
+    };
+    return b;
+}
+
+// Integer power (base^exp). Returns 0 for negative exponents.
+export fn fs_math_pow(base: i32, exp: i32) -> i32 {
+    if (exp < 0) {
+        return 0;
+    };
+    let mut result: i32 = 1;
+    let mut i: i32 = 0;
+    while (i < exp) {
+        result = result * base;
+        i = i + 1;
+    }
+    return result;
+}
+
+// Integer square root (floor). Returns 0 for negative inputs.
+// Uses Newton's method.
+export fn fs_math_sqrt(x: i32) -> i32 {
+    if (x <= 0) {
+        return 0;
+    };
+    if (x == 1) {
+        return 1;
+    };
+    let mut guess: i32 = x / 2;
+    let mut prev: i32 = 0;
+    let mut done: bool = false;
+    while (done == false) {
+        prev = guess;
+        guess = (guess + x / guess) / 2;
+        if (guess >= prev) {
+            done = true;
+        };
+    }
+    return guess;
+}
+
+// Clamp x to the range [lo, hi]
+export fn fs_math_clamp(x: i32, lo: i32, hi: i32) -> i32 {
+    if (x < lo) {
+        return lo;
+    };
+    if (x > hi) {
+        return hi;
+    };
+    return x;
+}

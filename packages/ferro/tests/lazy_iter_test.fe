@@ -1,0 +1,63 @@
+// Lazy iterator chain tests
+
+// Basic iter().collect() — identity
+let mut v = Vec::<int>::new();
+v.push(1);
+v.push(2);
+v.push(3);
+let collected = v.iter().collect();
+let mut s1: int = 0;
+for (x in collected) {
+    s1 = s1 + x;
+}
+print(s1);  // 6
+
+// iter().map(f).collect()
+let doubled = v.iter().map((x: int) -> int { x * 2 }).collect();
+let mut s2: int = 0;
+for (x in doubled) {
+    s2 = s2 + x;
+}
+print(s2);  // 12
+
+// iter().filter(f).collect()
+let big = v.iter().filter((x: int) -> bool { x > 1 }).collect();
+print(big.len());  // 2
+
+// iter().map(f).filter(g).collect() — chained
+let result = v.iter().map((x: int) -> int { x * 3 }).filter((x: int) -> bool { x > 5 }).collect();
+let mut s3: int = 0;
+for (x in result) {
+    s3 = s3 + x;
+}
+print(s3);  // 6 + 9 = 15
+
+// iter().count()
+let c = v.iter().count();
+print(c);  // 3
+
+// iter().filter(f).count()
+let c2 = v.iter().filter((x: int) -> bool { x > 1 }).count();
+print(c2);  // 2
+
+// iter().sum()
+let total = v.iter().sum();
+print(total);  // 6
+
+// iter().map(f).sum()
+let doubled_sum = v.iter().map((x: int) -> int { x * 10 }).sum();
+print(doubled_sum);  // 60
+
+// for (x in iter().filter(f))
+let mut s4: int = 0;
+for (x in v.iter().filter((x: int) -> bool { x > 1 })) {
+    s4 = s4 + x;
+}
+print(s4);  // 5
+
+// for (x in iter().map(f))
+let mut s5: int = 0;
+for (x in v.iter().map((x: int) -> int { x + 100 })) {
+    s5 = s5 + x;
+}
+print(s5);  // 306
