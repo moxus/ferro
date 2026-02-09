@@ -122,6 +122,9 @@ export class Emitter {
         if (node instanceof AST.CastExpression) {
             return this.emitCastExpression(node);
         }
+        if (node instanceof AST.InterpolatedStringExpression) {
+            return this.emitInterpolatedString(node);
+        }
         if (node instanceof AST.GenericInstantiationExpression) {
             return this.emit(node.left);
         }
@@ -513,6 +516,21 @@ ${arms}
 } })()`;
     }
 
+    private emitInterpolatedString(node: AST.InterpolatedStringExpression): string {
+        // Emit as JS template literal: `literal${expr}literal${expr}literal`
+        let result = "`";
+        for (const part of node.parts) {
+            if (part instanceof AST.StringLiteral) {
+                // Escape backticks in the literal text
+                result += part.value.replace(/`/g, "\\`").replace(/\$/g, "\\$");
+            } else {
+                result += `\${${this.emit(part)}}`;
+            }
+        }
+        result += "`";
+        return result;
+    }
+
     private emitClosureExpression(node: AST.ClosureExpression): string {
         const params = node.parameters.map(p => {
             if (p.type) {
@@ -574,6 +592,9 @@ ${arms}
         if (node instanceof AST.CallExpression) {
             return this.hasQuestionMark(node.function) ||
                 node.arguments.some(a => this.hasQuestionMark(a));
+        }
+        if (node instanceof AST.InterpolatedStringExpression) {
+            return node.parts.some(p => !(p instanceof AST.StringLiteral) && this.hasQuestionMark(p));
         }
         if (node instanceof AST.FunctionLiteral) {
             return false;

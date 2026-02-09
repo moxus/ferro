@@ -296,6 +296,19 @@
 
 ---
 
+### 32. String Interpolation (f-strings)
+- [x] **`f"..."` Syntax**: Rust/Python-inspired f-string literals with `{expr}` interpolation. E.g., `f"Hello {name}, you are {age} years old!"`.
+- [x] **Lexer**: `f"..."` recognized as `FString` token type. Content between quotes preserved with `{...}` delimiters intact, supporting nested braces in expressions.
+- [x] **AST Node**: `InterpolatedStringExpression` with alternating `StringLiteral` / `Expression` parts array.
+- [x] **Parser**: `parseFStringLiteral()` scans raw token content for `{`/`}` boundaries, sub-parses each interpolated expression via a fresh `Lexer`/`Parser` instance. Supports arbitrary expressions inside `{}` (identifiers, binary ops, function calls).
+- [x] **Analyzer**: Type-checks each interpolated expression. Allows `int`, `string`, `bool` (and `i8`, `any`, `unknown`). Reports error for non-interpolatable types (e.g., structs). Returns `string` type.
+- [x] **Runtime**: `fs_int_to_string(i32) -> fs_String` and `fs_bool_to_string(bool) -> fs_String` conversion functions added to `runtime.fe`.
+- [x] **LLVM Backend**: `emitInterpolatedString()` converts each part to a string register (calling `fs_int_to_string`/`fs_bool_to_string` for non-string types), then chains `fs_string_concat` calls to build the result.
+- [x] **TypeScript Backend**: `emitInterpolatedString()` emits native JavaScript template literals (`` `text ${expr} text` ``). Backticks and `$` in literal parts are escaped.
+- [x] **Test Coverage**: Lexer tests (3), parser tests (4), integration test (`fstring_test.fe`).
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
