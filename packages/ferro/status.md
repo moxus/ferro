@@ -309,6 +309,18 @@
 
 ---
 
+### 33. Iterator Combinators on HashMap Values
+- [x] **`map.values_iter()`**: Returns `Iterator<V>` — lazy iterator over HashMap values. Compile-time fused, zero-allocation.
+- [x] **`map.keys_iter()`**: Returns `Iterator<K>` — explicit lazy key iterator (equivalent to `map.iter()`).
+- [x] **`map.values().iter()` pattern**: Recognized as a lazy value iterator chain — the compiler detects the `values().iter()` pattern on HashMap and fuses it into a single cursor-based loop without materializing an intermediate Vec.
+- [x] **Full chain support**: `values_iter().map(f).filter(g).collect()`, `.count()`, `.sum()`, `.for_each()`, and `for (v in map.values_iter().filter(f))` all work with compile-time fusion.
+- [x] **LLVM Backend**: Value iteration uses `getelementptr` to offset from key pointer by `key_size` bytes within the cursor-based `fs_hashmap_iter_next` loop. All terminal operations (collect, count, sum, for_each, for-loop) support value iteration.
+- [x] **TypeScript Backend**: `values_iter()` → `[...map.values()]`, `keys_iter()` → `[...map.keys()]`. Chain operations map to native JS array methods.
+- [x] **Analyzer**: `values_iter()` returns `Iterator<V>`, `keys_iter()` returns `Iterator<K>`. Full bidirectional type inference for closure params in value iterator chains.
+- [x] **Test Coverage**: `hashmap_values_iter_test.fe` with 10 tests covering collect, map, filter, chained map+filter, count, filter+count, sum, map+sum, for-loop with filter, and values().iter() pattern.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -331,7 +343,7 @@
 ### 3. Language Features & Backends
 - **FFI Enhancements**: More robust handling of foreign function interfaces and platform-specific ABI considerations.
 - ~~**Closures / First-Class Functions**~~: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. ~~Bidirectional type inference for untyped trailing lambda params~~ — **Completed (see §26)**. ~~Heap-allocated environments for escaping closures, mutable capture by reference~~ — **Completed (see §27)**.
-- **Iterator Protocol**: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. ~~Lazy iterator chains~~ — **Completed (see §29)**. ~~User-defined `IntoIterator` trait~~ — **Completed (see §30)**. Remaining: iterator combinators on HashMap values.
+- ~~**Iterator Protocol**~~: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. ~~Lazy iterator chains~~ — **Completed (see §29)**. ~~User-defined `IntoIterator` trait~~ — **Completed (see §30)**. ~~Iterator combinators on HashMap values~~ — **Completed (see §33)**.
 - ~~**Error Messages with Source Locations**~~: **Completed (see §25)**.
 
 ---

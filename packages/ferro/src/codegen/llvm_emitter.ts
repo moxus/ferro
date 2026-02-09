@@ -3586,11 +3586,11 @@ export class LLVMEmitter {
 
     // ---- Lazy Iterator Chain Support ----
 
-    /** Check if an expression is part of a lazy iterator chain (contains .iter() in the chain) */
+    /** Check if an expression is part of a lazy iterator chain (contains .iter()/.values_iter()/.keys_iter() in the chain) */
     private isIteratorChain(expr: AST.Expression): boolean {
         let current = expr;
         while (current instanceof AST.MethodCallExpression) {
-            if (current.method.value === "iter") return true;
+            if (current.method.value === "iter" || current.method.value === "values_iter" || current.method.value === "keys_iter") return true;
             if (["map", "filter", "collect", "count", "sum", "for_each"].includes(current.method.value)) {
                 current = current.object;
             } else {
@@ -3601,16 +3601,31 @@ export class LLVMEmitter {
     }
 
     /** Walk backward through a method chain to extract iterator steps and source */
-    private analyzeIteratorChain(expr: AST.Expression): { source: AST.Expression, sourceKind: "vec" | "hashmap", steps: { kind: "map" | "filter", closure: AST.Expression }[] } | null {
+    private analyzeIteratorChain(expr: AST.Expression): { source: AST.Expression, sourceKind: "vec" | "hashmap", iterValues: boolean, steps: { kind: "map" | "filter", closure: AST.Expression }[] } | null {
         const steps: { kind: "map" | "filter", closure: AST.Expression }[] = [];
         let current = expr;
+        let iterValues = false;
 
         while (current instanceof AST.MethodCallExpression) {
             const method = current.method.value;
             if (method === "map" || method === "filter") {
                 steps.unshift({ kind: method as "map" | "filter", closure: current.arguments[0] });
                 current = current.object;
-            } else if (method === "iter") {
+            } else if (method === "iter" || method === "keys_iter") {
+                // Check for values().iter() pattern on HashMap
+                if (method === "iter" && current.object instanceof AST.MethodCallExpression && current.object.method.value === "values") {
+                    const innerObj = current.object.object;
+                    const innerType = this.getExpressionType(innerObj);
+                    if (this.isHashMapType(innerType)) {
+                        iterValues = true;
+                        current = innerObj;
+                        break;
+                    }
+                }
+                current = current.object;
+                break;
+            } else if (method === "values_iter") {
+                iterValues = true;
                 current = current.object;
                 break;
             } else if (["collect", "count", "sum", "for_each"].includes(method)) {
@@ -3626,7 +3641,7 @@ export class LLVMEmitter {
         else if (this.isHashMapType(sourceType)) sourceKind = "hashmap";
         else return null;
 
-        return { source: current, sourceKind, steps };
+        return { source: current, sourceKind, iterValues, steps };
     }
 
     /** Get the source Vec/HashMap alloca pointer from an expression */
@@ -3651,7 +3666,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             elemType = this.getVecElemType(chain.source);
         } else {
-            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+            const hmTypes = this.getHashMapKeyValueTypes(chain.source);
+            elemType = chain.iterValues ? hmTypes.valueType : hmTypes.keyType;
         }
 
         // Emit all closures before the loop (they may capture variables)
@@ -3695,7 +3711,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, newVecAddr, finalElemType, labelId, "collect");
         } else {
-            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, newVecAddr, finalElemType, labelId, "collect");
+            const keyOffsetSize = chain.iterValues ? this.sizeOfLLVMType(this.getHashMapKeyValueTypes(chain.source).keyType) : 0;
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, newVecAddr, finalElemType, labelId, "collect", undefined, chain.iterValues, keyOffsetSize);
         }
 
         // Return new Vec
@@ -3720,7 +3737,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             elemType = this.getVecElemType(chain.source);
         } else {
-            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+            const hmTypes = this.getHashMapKeyValueTypes(chain.source);
+            elemType = chain.iterValues ? hmTypes.valueType : hmTypes.keyType;
         }
 
         // Emit closures
@@ -3755,7 +3773,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, countAddr, currentElemType, labelId, "count");
         } else {
-            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, countAddr, currentElemType, labelId, "count");
+            const keyOffsetSize = chain.iterValues ? this.sizeOfLLVMType(this.getHashMapKeyValueTypes(chain.source).keyType) : 0;
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, countAddr, currentElemType, labelId, "count", undefined, chain.iterValues, keyOffsetSize);
         }
 
         const result = this.nextRegister();
@@ -3775,7 +3794,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             elemType = this.getVecElemType(chain.source);
         } else {
-            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+            const hmTypes = this.getHashMapKeyValueTypes(chain.source);
+            elemType = chain.iterValues ? hmTypes.valueType : hmTypes.keyType;
         }
 
         const closureAddrs: string[] = [];
@@ -3809,7 +3829,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, sumAddr, currentElemType, labelId, "sum");
         } else {
-            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, sumAddr, currentElemType, labelId, "sum");
+            const keyOffsetSize = chain.iterValues ? this.sizeOfLLVMType(this.getHashMapKeyValueTypes(chain.source).keyType) : 0;
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, sumAddr, currentElemType, labelId, "sum", undefined, chain.iterValues, keyOffsetSize);
         }
 
         const result = this.nextRegister();
@@ -3829,7 +3850,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             elemType = this.getVecElemType(chain.source);
         } else {
-            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+            const hmTypes = this.getHashMapKeyValueTypes(chain.source);
+            elemType = chain.iterValues ? hmTypes.valueType : hmTypes.keyType;
         }
 
         const closureAddrs: string[] = [];
@@ -3869,7 +3891,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             this.emitFusedVecIteratorLoop(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, null, currentElemType, labelId, "for_each");
         } else {
-            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, null, currentElemType, labelId, "for_each");
+            const keyOffsetSize = chain.iterValues ? this.sizeOfLLVMType(this.getHashMapKeyValueTypes(chain.source).keyType) : 0;
+            this.emitFusedHashMapIteratorLoop(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, null, currentElemType, labelId, "for_each", undefined, chain.iterValues, keyOffsetSize);
         }
 
         return "0";
@@ -4003,14 +4026,16 @@ export class LLVMEmitter {
         this.output += `  br label %${condLabel}\n${endLabel}:\n`;
     }
 
-    /** Emit the body of a fused iterator loop over a HashMap source (key iteration) */
+    /** Emit the body of a fused iterator loop over a HashMap source (key or value iteration) */
     private emitFusedHashMapIteratorLoop(
-        selfPtr: string, keyType: string,
+        selfPtr: string, elemType: string,
         steps: { kind: "map" | "filter", closure: AST.Expression }[],
         closureAddrs: string[], closureOutputTypes: string[],
         outputAddr: string | null, finalElemType: string,
         labelId: number, mode: "collect" | "count" | "sum" | "for_each" | "for_body",
-        forBodyCallback?: () => void
+        forBodyCallback?: () => void,
+        iterValues: boolean = false,
+        keyOffsetSize: number = 0
     ) {
         const hmStructType = this.getHashMapStructType();
         const condLabel = `iter_cond_${labelId}`;
@@ -4030,12 +4055,20 @@ export class LLVMEmitter {
         this.output += `  ${isNull} = icmp eq i8* ${rawKeyPtr}, null\n`;
         this.output += `  br i1 ${isNull}, label %${endLabel}, label %${bodyLabel}\n${bodyLabel}:\n`;
 
-        // Load key value
-        const castKeyPtr = this.nextRegister();
-        this.output += `  ${castKeyPtr} = bitcast i8* ${rawKeyPtr} to ${keyType}*\n`;
+        // Load key or value depending on iterValues flag
+        let elemPtr: string;
+        if (iterValues && keyOffsetSize > 0) {
+            // Offset from key pointer to value pointer: rawKeyPtr + key_size
+            elemPtr = this.nextRegister();
+            this.output += `  ${elemPtr} = getelementptr i8, i8* ${rawKeyPtr}, i32 ${keyOffsetSize}\n`;
+        } else {
+            elemPtr = rawKeyPtr;
+        }
+        const castElemPtr = this.nextRegister();
+        this.output += `  ${castElemPtr} = bitcast i8* ${elemPtr} to ${elemType}*\n`;
         let currentVal = this.nextRegister();
-        this.output += `  ${currentVal} = load ${keyType}, ${keyType}* ${castKeyPtr}\n`;
-        let currentType = keyType;
+        this.output += `  ${currentVal} = load ${elemType}, ${elemType}* ${castElemPtr}\n`;
+        let currentType = elemType;
 
         // Apply chain steps (same as Vec)
         let nextLabel = `iter_next_${labelId}`;
@@ -4127,7 +4160,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             elemType = this.getVecElemType(chain.source);
         } else {
-            elemType = this.getHashMapKeyValueTypes(chain.source).keyType;
+            const hmTypes = this.getHashMapKeyValueTypes(chain.source);
+            elemType = chain.iterValues ? hmTypes.valueType : hmTypes.keyType;
         }
 
         // Emit closures
@@ -4173,7 +4207,8 @@ export class LLVMEmitter {
         if (chain.sourceKind === "vec") {
             this.emitFusedVecIteratorLoopForBody(selfPtr, vecStructType, elemType, chain.steps, closureAddrs, closureOutputTypes, varAddr, currentElemType, labelId, stmt);
         } else {
-            this.emitFusedHashMapIteratorLoopForBody(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, varAddr, currentElemType, labelId, stmt);
+            const keyOffsetSize = chain.iterValues ? this.sizeOfLLVMType(this.getHashMapKeyValueTypes(chain.source).keyType) : 0;
+            this.emitFusedHashMapIteratorLoopForBody(selfPtr, elemType, chain.steps, closureAddrs, closureOutputTypes, varAddr, currentElemType, labelId, stmt, chain.iterValues, keyOffsetSize);
         }
     }
 
@@ -4264,11 +4299,12 @@ export class LLVMEmitter {
 
     /** Specialized fused HashMap iterator loop for for-body */
     private emitFusedHashMapIteratorLoopForBody(
-        selfPtr: string, keyType: string,
+        selfPtr: string, elemType: string,
         steps: { kind: "map" | "filter", closure: AST.Expression }[],
         closureAddrs: string[], closureOutputTypes: string[],
         varAddr: string, finalElemType: string,
-        labelId: number, stmt: AST.ForStatement
+        labelId: number, stmt: AST.ForStatement,
+        iterValues: boolean = false, keyOffsetSize: number = 0
     ) {
         const hmStructType = this.getHashMapStructType();
         const condLabel = `iter_cond_${labelId}`;
@@ -4287,11 +4323,19 @@ export class LLVMEmitter {
         this.output += `  ${isNull} = icmp eq i8* ${rawKeyPtr}, null\n`;
         this.output += `  br i1 ${isNull}, label %${endLabel}, label %${bodyLabel}\n${bodyLabel}:\n`;
 
-        const castKeyPtr = this.nextRegister();
-        this.output += `  ${castKeyPtr} = bitcast i8* ${rawKeyPtr} to ${keyType}*\n`;
+        // Load key or value depending on iterValues flag
+        let elemPtr: string;
+        if (iterValues && keyOffsetSize > 0) {
+            elemPtr = this.nextRegister();
+            this.output += `  ${elemPtr} = getelementptr i8, i8* ${rawKeyPtr}, i32 ${keyOffsetSize}\n`;
+        } else {
+            elemPtr = rawKeyPtr;
+        }
+        const castElemPtr = this.nextRegister();
+        this.output += `  ${castElemPtr} = bitcast i8* ${elemPtr} to ${elemType}*\n`;
         let currentVal = this.nextRegister();
-        this.output += `  ${currentVal} = load ${keyType}, ${keyType}* ${castKeyPtr}\n`;
-        let currentType = keyType;
+        this.output += `  ${currentVal} = load ${elemType}, ${elemType}* ${castElemPtr}\n`;
+        let currentType = elemType;
 
         for (let i = 0; i < steps.length; i++) {
             const step = steps[i];
@@ -4475,6 +4519,7 @@ export class LLVMEmitter {
             if (methodName === "len") return "i32";
             if (methodName === "contains_key") return "i32";
             if (methodName === "keys" || methodName === "values") return this.getVecStructType();
+            if (methodName === "values_iter" || methodName === "keys_iter") return "i32"; // Consumed by chain terminals
             return "void";
         }
 

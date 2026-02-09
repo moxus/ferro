@@ -102,10 +102,10 @@ export class Emitter {
                 const args = node.arguments.map(a => this.emit(a)).join(", ");
                 return `${obj}.forEach(${args})`;
             }
-            // HashMap keys()/values() return iterators in JS, need to spread into arrays
+            // HashMap keys()/values()/keys_iter()/values_iter() return iterators in JS, need to spread into arrays
             if (node.object instanceof AST.Identifier && this.hashMapVars.has(node.object.value)) {
-                if (method === "keys") return `[...${obj}.keys()]`;
-                if (method === "values") return `[...${obj}.values()]`;
+                if (method === "keys" || method === "keys_iter") return `[...${obj}.keys()]`;
+                if (method === "values" || method === "values_iter") return `[...${obj}.values()]`;
             }
             const args = node.arguments.map(a => this.emit(a)).join(", ");
             return `${obj}.${method}(${args})`;
