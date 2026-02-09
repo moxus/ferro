@@ -329,22 +329,28 @@
 
 ## 🛠 Planned Features
 
-### 1. Standard Library & Runtime
-- **Standard Library Functions**: ~~File I/O~~, ~~math utilities~~, and other common built-ins.
-  - ✅ **File I/O**: Basic file operations implemented in `runtime.fe` with `fs_file_open`, `fs_file_close`, `fs_file_read`, `fs_file_write`, `fs_file_read_line`, `fs_file_write_string`, `fs_file_seek`, `fs_file_tell`
-  - ✅ **File Type**: Added `File` primitive type to type system
-  - ✅ **Runtime Integration**: Added file function declarations to LLVM emitter
-  - ✅ **Math Utilities**: `abs`, `min`, `max`, `pow`, `sqrt`, `clamp` — **Completed (see §28)**
-  - 🔄 **Remaining**: Higher-level abstractions, error handling
+### Tier 1 — High Impact (Next Up)
+- **Floating-Point Type (`f64`)**: Float literals (`3.14`), `double` in LLVM, `number` in TS. Runtime: `fs_float_to_string`, Math overloads. Unlocks numeric computation beyond integers.
+- **`break` / `continue`**: Loop control keywords. Lexer keywords, AST nodes, analyzer validation (must be inside loop), LLVM branch to loop exit/header, TS pass-through.
+- **Inherent `impl` Blocks**: `impl Point { fn new() -> Point { ... } }` without requiring a trait. Enables idiomatic struct methods and constructors.
+- **`Option<T>` Built-in**: Prelude enum `Option<T> { Some(T), None }` with `?` operator integration and compiler awareness.
 
-### 2. Low Priority
-- **Cycle Detection**: Optional weak references or cycle-collector for complex data structures with reference cycles.
+### Tier 2 — Expressiveness
+- **Tuple Types**: `(int, string)` with positional access (`.0`, `.1`), destructuring, struct-based LLVM representation.
+- **String Methods**: `s.len()`, `s.contains("x")`, `s.starts_with("h")`, `s.trim()`, `s.to_uppercase()` — method syntax on strings via inherent impls.
+- **Pattern Match Exhaustiveness**: Compiler warns when `match` is missing cases for enum variants.
+- **`const` Declarations**: Compile-time constants (`const PI: f64 = 3.14159`).
 
-### 3. Language Features & Backends
-- **FFI Enhancements**: More robust handling of foreign function interfaces and platform-specific ABI considerations.
-- ~~**Closures / First-Class Functions**~~: ~~Anonymous functions~~ — **Completed (see §20)**. ~~Variable capture analysis for LLVM backend, closure conversion for native compilation~~ — **Completed (see §21)**. ~~Bidirectional type inference for untyped trailing lambda params~~ — **Completed (see §26)**. ~~Heap-allocated environments for escaping closures, mutable capture by reference~~ — **Completed (see §27)**.
-- ~~**Iterator Protocol**~~: ~~`for x in collection` support~~ — **Completed (see §22)**. ~~HashMap iteration, iterator combinators (`map`/`filter`/`collect`)~~ — **Completed (see §23)**. ~~Lazy iterator chains~~ — **Completed (see §29)**. ~~User-defined `IntoIterator` trait~~ — **Completed (see §30)**. ~~Iterator combinators on HashMap values~~ — **Completed (see §33)**.
-- ~~**Error Messages with Source Locations**~~: **Completed (see §25)**.
+### Tier 3 — Ecosystem & Polish
+- **Full `Result<T, E>` Support**: `Ok(v)` / `Err(e)` constructors, `?` propagation in both backends.
+- **Type Aliases**: `type Name = SomeType`.
+- **Array Types**: Fixed-size `[int; 5]` for stack-allocated arrays.
+- **Async/Await**: Important for JS ecosystem interop (large undertaking).
+
+### Existing Planned Items
+- **Standard Library**: ~~File I/O~~, ~~Math~~ — completed. Remaining: higher-level abstractions, error handling.
+- **Cycle Detection** (Low Priority): Optional weak references or cycle-collector.
+- **FFI Enhancements**: More robust platform-specific ABI handling.
 
 ---
 
