@@ -153,6 +153,10 @@ export class Parser {
         return this.parseWhileStatement();
       case TokenType.For:
         return this.parseForStatement();
+      case TokenType.Break:
+        return this.parseBreakStatement();
+      case TokenType.Continue:
+        return this.parseContinueStatement();
       case TokenType.Struct:
         return this.parseStructDefinition();
       case TokenType.Enum:
@@ -206,6 +210,22 @@ export class Parser {
     if (!this.expectPeek(TokenType.LBrace)) return null;
     const body = this.parseBlockStatement();
     return new AST.ForStatement(token, variable, iterable, body);
+  }
+
+  private parseBreakStatement(): AST.BreakStatement {
+    const token = this.curToken;
+    if (this.peekTokenIs(TokenType.Semi)) {
+      this.nextToken();
+    }
+    return new AST.BreakStatement(token);
+  }
+
+  private parseContinueStatement(): AST.ContinueStatement {
+    const token = this.curToken;
+    if (this.peekTokenIs(TokenType.Semi)) {
+      this.nextToken();
+    }
+    return new AST.ContinueStatement(token);
   }
 
   private parseUnsafeExpression(): AST.Expression | null {
@@ -464,17 +484,24 @@ export class Parser {
     const { typeParams, typeConstraints } = this.parseTypeParamsWithBounds();
 
     if (!this.expectPeek(TokenType.Identifier)) return null;
-    const traitName = new AST.Identifier(this.curToken, this.curToken.literal);
+    const firstName = new AST.Identifier(this.curToken, this.curToken.literal);
 
-    // impl Trait for Type
-    if (!this.expectPeek(TokenType.For)) {
-      return null;
+    // Decide: inherent impl (impl Type { ... }) vs trait impl (impl Trait for Type { ... })
+    let traitName: AST.Identifier | null = null;
+    let targetType: AST.Identifier;
+
+    if (this.peekTokenIs(TokenType.For)) {
+      // impl Trait for Type
+      traitName = firstName;
+      this.nextToken(); // consume 'for'
+      if (!this.expectPeek(TokenType.Identifier)) return null;
+      targetType = new AST.Identifier(this.curToken, this.curToken.literal);
+    } else {
+      // Inherent impl: impl Type { ... }
+      targetType = firstName;
     }
 
-    if (!this.expectPeek(TokenType.Identifier)) return null;
-    const targetType = new AST.Identifier(this.curToken, this.curToken.literal);
-
-    // Parse optional target type args: ... for Box<T>
+    // Parse optional target type args: ... for Box<T> or impl Point<T> { ... }
     const targetTypeArgs: string[] = [];
     if (this.peekTokenIs(TokenType.LT)) {
         this.nextToken(); // <

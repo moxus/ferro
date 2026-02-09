@@ -1,0 +1,55 @@
+// Test Option<T> built-in type
+
+// Basic Some and None construction
+let a = Some(42);
+let b: Option<int> = Some(10);
+
+// unwrap
+let val = a.unwrap();
+print(val);
+
+// unwrap_or
+let c = Some(5);
+let d = c.unwrap_or(0);
+print(d);
+
+// is_some / is_none
+let e = Some(1);
+print(e.is_some());
+print(e.is_none());
+
+// map
+let f = Some(3);
+let g = f.map { x -> x * 2 };
+print(g.unwrap());
+
+// Option::Some / Option::None static construction
+let h = Option::Some(99);
+print(h.unwrap());
+
+// match on Option
+let result = match (h) {
+    Option::Some(v) => v + 1,
+    Option::None => 0,
+};
+print(result);
+
+// ? operator on Option
+fn find_positive(x: int) -> Option<int> {
+    if (x > 0) {
+        Some(x)
+    } else {
+        None
+    }
+}
+
+fn double_positive(x: int) -> Option<int> {
+    let v = find_positive(x)?;
+    Some(v * 2)
+}
+
+let r1 = double_positive(5);
+print(r1.unwrap());
+
+let r2 = double_positive(-1);
+print(r2.is_none());

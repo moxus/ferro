@@ -6,7 +6,7 @@ import * as AST from "../ast/ast";
 import { Analyzer } from "./analyzer";
 import { SymbolTable } from "./symbol_table";
 import { Expander } from "../macros/expander";
-import { VoidType, FileType } from "./types";
+import { VoidType, FileType, AnyType } from "./types";
 import { ParseError } from "../errors";
 
 export interface CompiledModule {
@@ -69,6 +69,12 @@ export class ModuleLoader {
         moduleScope.define("print", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: VoidType }, false, 0);
         moduleScope.define("drop", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: VoidType }, false, 0);
         moduleScope.define("File", FileType, false, 0);
+        // Built-in Result constructors
+        moduleScope.define("Ok", { kind: "function", params: [AnyType], returnType: { kind: "result", ok: AnyType, err: AnyType } }, false, 0);
+        moduleScope.define("Err", { kind: "function", params: [AnyType], returnType: { kind: "result", ok: AnyType, err: AnyType } }, false, 0);
+        // Built-in Option constructors
+        moduleScope.define("Some", { kind: "function", params: [AnyType], returnType: { kind: "option", inner: AnyType } }, false, 0);
+        moduleScope.define("None", { kind: "option", inner: AnyType }, false, 0);
 
         // First pass: Resolve imports and recursively load
         program.statements.forEach(stmt => {

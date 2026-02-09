@@ -1,7 +1,7 @@
 import * as AST from "../ast/ast";
 import { Token, TokenType } from "../token";
 import { SymbolTable } from "./symbol_table";
-import { Type, IntType, F64Type, StringType, BoolType, VoidType, NullType, FileType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
+import { Type, IntType, F64Type, StringType, BoolType, VoidType, NullType, FileType, AnyType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
 
 export interface Diagnostic {
     message: string;
@@ -25,6 +25,10 @@ export class Analyzer {
     private implBlockStore: AST.ImplBlock[] = [];
     // Track whether the current function returns Result (for ? operator validation)
     private currentFnReturnsResult: Type | null = null;
+    // Track whether the current function returns Option (for ? operator validation)
+    private currentFnReturnsOption: boolean = false;
+    // Track loop nesting depth for break/continue validation
+    private loopDepth: number = 0;
 
     public analyze(program: AST.Program, initialScope?: SymbolTable, modulePath: string = "") {
         this.currentModulePath = modulePath;
@@ -40,6 +44,9 @@ export class Analyzer {
             // Built-in Result constructors
             this.scope.define("Ok", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: { kind: "result", ok: { kind: "primitive", name: "any" }, err: { kind: "primitive", name: "any" } } }, false, 0);
             this.scope.define("Err", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: { kind: "result", ok: { kind: "primitive", name: "any" }, err: { kind: "primitive", name: "any" } } }, false, 0);
+            // Built-in Option constructors
+            this.scope.define("Some", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: { kind: "option", inner: { kind: "primitive", name: "any" } } }, false, 0);
+            this.scope.define("None", { kind: "option", inner: { kind: "primitive", name: "any" } }, false, 0);
         }
 
         program.statements.forEach(stmt => this.visitStatement(stmt));
@@ -78,15 +85,30 @@ export class Analyzer {
         } else if (stmt instanceof AST.TraitDeclaration) {
             this.traitDefs.add(stmt.name.value);
         } else if (stmt instanceof AST.ImplBlock) {
-            const traitName = stmt.traitName.value;
-            const targetType = stmt.targetType.value;
-            if (!this.traitImpls.has(traitName)) {
-                this.traitImpls.set(traitName, new Set());
+            if (stmt.traitName) {
+                const traitName = stmt.traitName.value;
+                const targetType = stmt.targetType.value;
+                if (!this.traitImpls.has(traitName)) {
+                    this.traitImpls.set(traitName, new Set());
+                }
+                this.traitImpls.get(traitName)!.add(targetType);
             }
-            this.traitImpls.get(traitName)!.add(targetType);
             this.implBlockStore.push(stmt);
+        } else if (stmt instanceof AST.WhileStatement) {
+            this.visitExpression(stmt.condition);
+            this.loopDepth++;
+            this.visitBlockStatement(stmt.body);
+            this.loopDepth--;
         } else if (stmt instanceof AST.ForStatement) {
             this.visitForStatement(stmt);
+        } else if (stmt instanceof AST.BreakStatement) {
+            if (this.loopDepth === 0) {
+                this.error("`break` can only be used inside a loop", stmt.token);
+            }
+        } else if (stmt instanceof AST.ContinueStatement) {
+            if (this.loopDepth === 0) {
+                this.error("`continue` can only be used inside a loop", stmt.token);
+            }
         }
     }
 
@@ -122,8 +144,21 @@ export class Analyzer {
         const prevScope = this.scope;
         this.scope = this.scope.createChild();
         this.scope.define(stmt.variable.value, elemType, false, stmt.token.line, this.currentModulePath);
+        this.loopDepth++;
         stmt.body.statements.forEach(s => this.visitStatement(s));
+        this.loopDepth--;
         this.scope = prevScope;
+    }
+
+    /** Look for an inherent method on a type. Returns the FunctionLiteral if found. */
+    private findInherentMethod(typeName: string, methodName: string): AST.FunctionLiteral | null {
+        for (const impl of this.implBlockStore) {
+            if (impl.traitName === null && impl.targetType.value === typeName) {
+                const method = impl.methods.find(m => m.name === methodName);
+                if (method) return method;
+            }
+        }
+        return null;
     }
 
     /** Look for an IntoIterator impl for the given struct type. Returns the element type if found. */
@@ -134,7 +169,7 @@ export class Analyzer {
 
         // Find the impl block to get the into_iter return type
         for (const impl of this.implBlockStore) {
-            if (impl.traitName.value === "IntoIterator" && impl.targetType.value === structName) {
+            if (impl.traitName && impl.traitName.value === "IntoIterator" && impl.targetType.value === structName) {
                 const intoIterMethod = impl.methods.find(m => m.name === "into_iter");
                 if (intoIterMethod && intoIterMethod.returnType) {
                     const retType = this.resolveType(intoIterMethod.returnType);
@@ -332,17 +367,24 @@ export class Analyzer {
                 this.scope.define(p.name.value, pType, false, p.token.line, this.currentModulePath);
             });
 
-            // Track if this function returns Result (for ? operator validation)
+            // Track if this function returns Result or Option (for ? operator validation)
             const prevFnReturnsResult = this.currentFnReturnsResult;
+            const prevFnReturnsOption = this.currentFnReturnsOption;
             if (retType.kind === "result") {
                 this.currentFnReturnsResult = retType;
+                this.currentFnReturnsOption = false;
+            } else if (retType.kind === "option") {
+                this.currentFnReturnsResult = null;
+                this.currentFnReturnsOption = true;
             } else {
                 this.currentFnReturnsResult = null;
+                this.currentFnReturnsOption = false;
             }
 
             this.visitBlockStatement(expr.body);
 
             this.currentFnReturnsResult = prevFnReturnsResult;
+            this.currentFnReturnsOption = prevFnReturnsOption;
             this.scope = prevScope;
             this.genericContext = prevContext;
 
@@ -390,6 +432,11 @@ export class Analyzer {
                         ? this.currentFnReturnsResult.ok
                         : UnknownType;
                     return { kind: "result", ok: okType, err: errType };
+                }
+                // Built-in Some(value) constructor — infer Option type from argument
+                if (name === "Some" && expr.arguments.length === 1) {
+                    const innerType = this.visitExpression(expr.arguments[0]);
+                    return { kind: "option", inner: innerType };
                 }
             }
 
@@ -442,8 +489,20 @@ export class Analyzer {
                 return enumType;
             }
 
-            // Recognize Vec::<T>::new() and HashMap::<K,V>::new() constructors
+            // Option::Some(v), Option::None static constructors
             const receiverName = expr.receiver.value;
+            if (receiverName === "Option") {
+                const variantName = expr.method.value;
+                if (variantName === "Some" && expr.arguments.length === 1) {
+                    const innerType = this.visitExpression(expr.arguments[0]);
+                    return { kind: "option", inner: innerType };
+                }
+                if (variantName === "None") {
+                    return { kind: "option", inner: AnyType };
+                }
+            }
+
+            // Recognize Vec::<T>::new() and HashMap::<K,V>::new() constructors
             if (expr.method.value === "new" && expr.genericTypeArgs && expr.genericTypeArgs.length > 0) {
                 if (receiverName === "Vec" || receiverName === "HashMap") {
                     return {
@@ -460,6 +519,14 @@ export class Analyzer {
                 // If any argument is f64, return f64
                 if (argTypes.some(t => typesEqual(t, F64Type))) return F64Type;
                 return IntType;
+            }
+
+            // Inherent static method calls: Type::method()
+            const inherentMethod = this.findInherentMethod(receiverName, expr.method.value);
+            if (inherentMethod) {
+                expr.arguments.forEach(a => this.visitExpression(a));
+                const retType = inherentMethod.returnType ? this.resolveType(inherentMethod.returnType) : VoidType;
+                return retType;
             }
 
             return UnknownType;
@@ -498,6 +565,26 @@ export class Analyzer {
                             }
                         } else {
                             this.error(`Result has no variant '${variantName}' (expected Ok or Err)`, arm.token);
+                        }
+                    // Support Option<T> pattern matching: Option::Some(v), Option::None
+                    } else if (matchedType.kind === "option" && pat.enumName.value === "Option") {
+                        const variantName = pat.variantName.value;
+                        if (variantName === "Some") {
+                            if (pat.bindings.length !== 1) {
+                                this.error(`Pattern for 'Option::Some' binds ${pat.bindings.length} variable(s), but variant has 1 field`, arm.token);
+                            } else {
+                                const prevScope = this.scope;
+                                this.scope = this.scope.createChild();
+                                this.scope.define(pat.bindings[0].value, matchedType.inner, false, arm.token.line, this.currentModulePath);
+                                this.visitStatement(arm.body);
+                                this.scope = prevScope;
+                                continue;
+                            }
+                        } else if (variantName === "None") {
+                            this.visitStatement(arm.body);
+                            continue;
+                        } else {
+                            this.error(`Option has no variant '${variantName}' (expected Some or None)`, arm.token);
                         }
                     } else if (matchedType.kind === "enum") {
                         const variant = matchedType.variants.find(v => v.name === pat.variantName.value);
@@ -683,6 +770,66 @@ export class Analyzer {
                 return UnknownType;
             }
 
+            // Option<T> method return types
+            if (receiverType.kind === "option") {
+                const innerType = receiverType.inner;
+
+                if (methodName === "unwrap") {
+                    expr.arguments.forEach(a => this.visitExpression(a));
+                    return innerType;
+                }
+                if (methodName === "unwrap_or") {
+                    expr.arguments.forEach(a => this.visitExpression(a));
+                    return innerType;
+                }
+                if (methodName === "is_some" || methodName === "is_none") {
+                    expr.arguments.forEach(a => this.visitExpression(a));
+                    return BoolType;
+                }
+                if (methodName === "map" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, [innerType]);
+                        if (closureType.kind === "function") {
+                            return { kind: "option", inner: closureType.returnType };
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return { kind: "option", inner: UnknownType };
+                }
+                if (methodName === "and_then" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, [innerType]);
+                        if (closureType.kind === "function" && closureType.returnType.kind === "option") {
+                            return closureType.returnType;
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return receiverType;
+                }
+                if (methodName === "or_else" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, []);
+                        if (closureType.kind === "function" && closureType.returnType.kind === "option") {
+                            return closureType.returnType;
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return receiverType;
+                }
+                // Fallthrough for unknown methods
+                expr.arguments.forEach(a => this.visitExpression(a));
+                return UnknownType;
+            }
+
             // Result<T, E> method return types
             if (receiverType.kind === "result") {
                 const okType = receiverType.ok;
@@ -757,6 +904,16 @@ export class Analyzer {
                 return UnknownType;
             }
 
+            // Inherent method lookup: check impl blocks for methods on this type
+            if (receiverType.kind === "struct") {
+                const inherentMethod = this.findInherentMethod(receiverType.name, methodName);
+                if (inherentMethod) {
+                    expr.arguments.forEach(a => this.visitExpression(a));
+                    const retType = inherentMethod.returnType ? this.resolveType(inherentMethod.returnType) : VoidType;
+                    return retType;
+                }
+            }
+
             // Default: visit args normally
             expr.arguments.forEach(a => this.visitExpression(a));
             return UnknownType;
@@ -769,6 +926,12 @@ export class Analyzer {
                     this.error("The `?` operator can only be used in functions that return Result<T, E>", expr.token);
                 }
                 return leftType.ok;
+            }
+            if (leftType.kind === "option") {
+                if (!this.currentFnReturnsOption) {
+                    this.error("The `?` operator on Option can only be used in functions that return Option<T>", expr.token);
+                }
+                return leftType.inner;
             }
             // Permissive: allow ? on unknown/any types
             return UnknownType;
@@ -973,6 +1136,14 @@ export class Analyzer {
                 kind: "result",
                 ok: this.resolveType(t.typeParams[0]),
                 err: this.resolveType(t.typeParams[1]),
+            };
+        }
+
+        // Option<T> → specialized option type
+        if (t instanceof AST.TypeIdentifier && t.value === "Option" && t.typeParams.length === 1) {
+            return {
+                kind: "option",
+                inner: this.resolveType(t.typeParams[0]),
             };
         }
 

@@ -90,6 +90,10 @@ export class LLVMEmitter {
     // Whether we are inside a runtime function (skip RC insertion for runtime internals)
     private insideRuntimeFn: boolean = false;
 
+    // Loop label stack for break/continue support
+    // Each entry: { condLabel, endLabel } for while/for loops
+    private loopLabelStack: { condLabel: string, endLabel: string }[] = [];
+
     private floatPrintfFormatEmitted: boolean = false;
 
     private ensureFloatPrintfFormat(): string {
@@ -1217,6 +1221,24 @@ export class LLVMEmitter {
             this.emitWhileStatement(stmt);
         } else if (stmt instanceof AST.ForStatement) {
             this.emitForStatement(stmt);
+        } else if (stmt instanceof AST.BreakStatement) {
+            if (this.loopLabelStack.length > 0) {
+                this.emitScopeRelease();
+                const { endLabel } = this.loopLabelStack[this.loopLabelStack.length - 1];
+                this.output += `  br label %${endLabel}\n`;
+                // Start a dead block so subsequent instructions don't cause LLVM errors
+                const deadLabel = `break_dead_${this.labelCounter++}`;
+                this.output += `${deadLabel}:\n`;
+            }
+        } else if (stmt instanceof AST.ContinueStatement) {
+            if (this.loopLabelStack.length > 0) {
+                this.emitScopeRelease();
+                const { condLabel } = this.loopLabelStack[this.loopLabelStack.length - 1];
+                this.output += `  br label %${condLabel}\n`;
+                // Start a dead block so subsequent instructions don't cause LLVM errors
+                const deadLabel = `continue_dead_${this.labelCounter++}`;
+                this.output += `${deadLabel}:\n`;
+            }
         } else if (stmt instanceof AST.BlockStatement) {
             stmt.statements.forEach(s => this.emitStatement(s));
         }
@@ -1230,7 +1252,9 @@ export class LLVMEmitter {
         this.output += `  br label %${condLabel}\n${condLabel}:\n`;
         const condReg = this.emitExpression(stmt.condition);
         this.output += `  br i1 ${condReg}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
+        this.loopLabelStack.push({ condLabel, endLabel });
         this.emitStatement(stmt.body);
+        this.loopLabelStack.pop();
         this.output += `  br label %${condLabel}\n${endLabel}:\n`;
     }
 
@@ -1287,12 +1311,16 @@ export class LLVMEmitter {
         this.output += `  br i1 ${cmpReg}, label %${bodyLabel}, label %${endLabel}\n${bodyLabel}:\n`;
 
         // Body with RC scope
+        const incLabel = `for_inc_${labelId}`;
+        this.loopLabelStack.push({ condLabel: incLabel, endLabel });
         this.pushRcScope();
         stmt.body.statements.forEach(s => this.emitStatement(s));
         this.emitScopeRelease();
         this.popRcScope();
+        this.loopLabelStack.pop();
 
         // Increment: i = i + 1
+        this.output += `  br label %${incLabel}\n${incLabel}:\n`;
         const loadReg = this.nextRegister();
         this.output += `  ${loadReg} = load i32, i32* ${varAddr}\n`;
         const incReg = this.nextRegister();
@@ -1359,11 +1387,15 @@ export class LLVMEmitter {
         this.output += `  store ${elemType} ${elemVal}, ${elemType}* ${varAddr}\n`;
 
         // Emit body statements
+        const incLabel = `forvec_inc_${labelId}`;
+        this.loopLabelStack.push({ condLabel: incLabel, endLabel });
         stmt.body.statements.forEach(s => this.emitStatement(s));
         this.emitScopeRelease();
         this.popRcScope();
+        this.loopLabelStack.pop();
 
         // Increment index
+        this.output += `  br label %${incLabel}\n${incLabel}:\n`;
         const loadIdx = this.nextRegister();
         this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
         const incIdx = this.nextRegister();
@@ -1424,9 +1456,11 @@ export class LLVMEmitter {
         this.output += `  store ${keyType} ${keyVal}, ${keyType}* ${varAddr}\n`;
 
         // Emit body statements
+        this.loopLabelStack.push({ condLabel, endLabel });
         stmt.body.statements.forEach(s => this.emitStatement(s));
         this.emitScopeRelease();
         this.popRcScope();
+        this.loopLabelStack.pop();
 
         // Branch back to condition
         this.output += `  br label %${condLabel}\n${endLabel}:\n`;
@@ -1968,6 +2002,18 @@ export class LLVMEmitter {
             return reg;
         }
 
+        // Inherent static method dispatch: Type::method(args...)
+        {
+            const typeName = expr.receiver.value;
+            const mangledTypeName = this.getImplTargetTypeName(typeName);
+            const key = `__inherent_${typeName}`;
+            const implBlock = this.implBlocks.get(key);
+            if (implBlock && implBlock.methods.some(m => m.name === expr.method.value)) {
+                const funcName = `__inherent_${mangledTypeName}_${expr.method.value}`;
+                return this.emitInherentMethodCall(funcName, expr.arguments);
+            }
+        }
+
         // Trait method dispatch: TraitName::method(self, args...)
         const traitName = expr.receiver.value;
         if (this.traitMethods.has(traitName)) {
@@ -1975,6 +2021,34 @@ export class LLVMEmitter {
         }
 
         return "0";
+    }
+
+    private emitInherentMethodCall(funcName: string, args: AST.Expression[]): string {
+        const retType = this.functionReturnTypes.get(funcName) || "i32";
+        const paramTypes = this.functionParamTypes.get(funcName) || [];
+
+        const argVals = args.map((a, i) => {
+            const val = this.emitExpression(a);
+            const expectedType = paramTypes[i] || "i32";
+            const actualType = this.getExpressionType(a);
+            // If the param expects a pointer to struct/enum, pass pointer
+            if (expectedType.endsWith("*") && !actualType.endsWith("*")) {
+                // Need to alloca, store, pass pointer
+                const tmpAddr = this.nextRegister();
+                this.output += `  ${tmpAddr} = alloca ${actualType}\n`;
+                this.output += `  store ${actualType} ${val}, ${actualType}* ${tmpAddr}\n`;
+                return `${expectedType} ${tmpAddr}`;
+            }
+            return `${expectedType} ${val}`;
+        });
+
+        if (retType === "void") {
+            this.output += `  call void @${funcName}(${argVals.join(", ")})\n`;
+            return "0";
+        }
+        const reg = this.nextRegister();
+        this.output += `  ${reg} = call ${retType} @${funcName}(${argVals.join(", ")})\n`;
+        return reg;
     }
 
     private emitEnumVariantConstruction(enumName: string, variantName: string, args: AST.Expression[]): string {
@@ -2970,8 +3044,26 @@ export class LLVMEmitter {
     // ---- Trait/Impl Support ----
 
     private registerImplBlock(impl: AST.ImplBlock, modulePath: string) {
-        const traitName = impl.traitName.value;
         const targetType = impl.targetType.value;
+
+        if (!impl.traitName) {
+            // Inherent impl: use "__inherent" as a pseudo-trait name
+            const key = `__inherent_${targetType}`;
+            if (impl.typeParams.length > 0) {
+                if (!this.genericImplBlocks.has("__inherent")) {
+                    this.genericImplBlocks.set("__inherent", []);
+                    this.genericImplModulePaths.set("__inherent", []);
+                }
+                this.genericImplBlocks.get("__inherent")!.push(impl);
+                this.genericImplModulePaths.get("__inherent")!.push(modulePath);
+            } else {
+                this.implBlocks.set(key, impl);
+                this.implBlockModulePaths.set(key, modulePath);
+            }
+            return;
+        }
+
+        const traitName = impl.traitName.value;
 
         if (impl.typeParams.length > 0) {
             // Generic impl: store for on-demand monomorphization
@@ -2999,7 +3091,7 @@ export class LLVMEmitter {
     }
 
     private emitImplMethods(impl: AST.ImplBlock) {
-        const traitName = impl.traitName.value;
+        const traitName = impl.traitName ? impl.traitName.value : "__inherent";
         const targetType = this.getImplTargetTypeName(impl.targetType.value);
 
         for (const method of impl.methods) {
@@ -3196,7 +3288,7 @@ export class LLVMEmitter {
         for (const [key, impl] of this.implBlocks) {
             const implTarget = this.getImplTargetTypeName(impl.targetType.value);
             if (implTarget === targetTypeName && impl.methods.some(m => m.name === methodName)) {
-                foundTraitName = impl.traitName.value;
+                foundTraitName = impl.traitName ? impl.traitName.value : "__inherent";
                 break;
             }
         }
@@ -4388,10 +4480,12 @@ export class LLVMEmitter {
 
         // Store to loop variable and run body
         this.output += `  store ${finalElemType} ${currentVal}, ${finalElemType}* ${varAddr}\n`;
+        this.loopLabelStack.push({ condLabel: nextLabel, endLabel });
         this.pushRcScope();
         stmt.body.statements.forEach(s => this.emitStatement(s));
         this.emitScopeRelease();
         this.popRcScope();
+        this.loopLabelStack.pop();
 
         this.output += `  br label %${nextLabel}\n${nextLabel}:\n`;
         const loadIdx = this.nextRegister();
@@ -4477,10 +4571,12 @@ export class LLVMEmitter {
         }
 
         this.output += `  store ${finalElemType} ${currentVal}, ${finalElemType}* ${varAddr}\n`;
+        this.loopLabelStack.push({ condLabel: nextLabel, endLabel });
         this.pushRcScope();
         stmt.body.statements.forEach(s => this.emitStatement(s));
         this.emitScopeRelease();
         this.popRcScope();
+        this.loopLabelStack.pop();
 
         this.output += `  br label %${nextLabel}\n${nextLabel}:\n`;
         this.output += `  br label %${condLabel}\n${endLabel}:\n`;
@@ -4497,7 +4593,7 @@ export class LLVMEmitter {
 
         // Search impl blocks for one targeting this struct with an into_iter method
         for (const [key, impl] of this.implBlocks) {
-            if (impl.traitName.value === "IntoIterator") {
+            if (impl.traitName && impl.traitName.value === "IntoIterator") {
                 const implTarget = this.getImplTargetTypeName(impl.targetType.value);
                 if (implTarget === structName) {
                     const intoIterMethod = impl.methods.find(m => m.name === "into_iter");
@@ -4575,10 +4671,14 @@ export class LLVMEmitter {
                     this.output += `  ${elemVal} = load ${elemType}, ${elemType}* ${castPtr}\n`;
                     this.output += `  store ${elemType} ${elemVal}, ${elemType}* ${varAddr}\n`;
 
+                    const incLabel = `foriter_inc_${labelId}`;
+                    this.loopLabelStack.push({ condLabel: incLabel, endLabel });
                     stmt.body.statements.forEach(s => this.emitStatement(s));
                     this.emitScopeRelease();
                     this.popRcScope();
+                    this.loopLabelStack.pop();
 
+                    this.output += `  br label %${incLabel}\n${incLabel}:\n`;
                     const loadIdx = this.nextRegister();
                     this.output += `  ${loadIdx} = load i32, i32* ${idxAddr}\n`;
                     const incIdx = this.nextRegister();
@@ -4638,7 +4738,7 @@ export class LLVMEmitter {
         for (const [key, impl] of this.implBlocks) {
             const implTarget = this.getImplTargetTypeName(impl.targetType.value);
             if (implTarget === targetTypeName) {
-                const traitName = impl.traitName.value;
+                const traitName = impl.traitName ? impl.traitName.value : "__inherent";
                 const funcName = `${traitName}_${targetTypeName}_${methodName}`;
                 if (this.functionReturnTypes.has(funcName)) {
                     return this.functionReturnTypes.get(funcName)!;
