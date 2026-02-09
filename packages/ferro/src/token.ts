@@ -33,6 +33,7 @@ export enum TokenType {
   Identifier = "IDENTIFIER",
   Number = "NUMBER",
   String = "STRING",
+  FString = "FSTRING", // f"...{expr}..."
 
   // Symbols
   LPharen = "LPHAREN", // (

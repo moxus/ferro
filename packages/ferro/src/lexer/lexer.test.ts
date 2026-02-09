@@ -168,6 +168,36 @@ describe("Lexer", () => {
     expect(tok.literal).toBe("...");
   });
 
+  it("should tokenize f-string as FString token", () => {
+    const input = `f"Hello {name}, age {age}!"`;
+    const lexer = new Lexer(input);
+
+    const tok = lexer.nextToken();
+    expect(tok.type).toBe(TokenType.FString);
+    expect(tok.literal).toBe("Hello {name}, age {age}!");
+
+    const eof = lexer.nextToken();
+    expect(eof.type).toBe(TokenType.EOF);
+  });
+
+  it("should tokenize f-string with no interpolations", () => {
+    const input = `f"just a string"`;
+    const lexer = new Lexer(input);
+
+    const tok = lexer.nextToken();
+    expect(tok.type).toBe(TokenType.FString);
+    expect(tok.literal).toBe("just a string");
+  });
+
+  it("should tokenize f-string with expression", () => {
+    const input = `f"{x + 1}"`;
+    const lexer = new Lexer(input);
+
+    const tok = lexer.nextToken();
+    expect(tok.type).toBe(TokenType.FString);
+    expect(tok.literal).toBe("{x + 1}");
+  });
+
   it("should tokenize for and in keywords", () => {
     const input = "for (i in 0..10)";
     const lexer = new Lexer(input);

@@ -1197,6 +1197,28 @@ export class ClosureParam implements Node {
 }
 
 /**
+ * InterpolatedStringExpression — f"Hello {name}, age {age}"
+ * Stores alternating literal parts and expression parts.
+ * parts[0] is always a string literal (may be empty "").
+ * parts[1] is the first expression, parts[2] the next literal, etc.
+ */
+export class InterpolatedStringExpression implements Expression {
+  token: Token;
+  parts: (StringLiteral | Expression)[]; // alternating: literal, expr, literal, expr, ..., literal
+
+  constructor(token: Token, parts: (StringLiteral | Expression)[]) {
+    this.token = token;
+    this.parts = parts;
+  }
+
+  expressionNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `f"${this.parts.map(p => p instanceof StringLiteral ? p.value : `{${p.toString()}}`).join("")}"`;
+  }
+}
+
+/**
  * FunctionTypeNode — represents a function type in type position.
  * Syntax: (i32, i32) -> i32
  */

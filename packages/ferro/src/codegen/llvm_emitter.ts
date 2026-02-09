@@ -254,7 +254,8 @@ export class LLVMEmitter {
             "fs_hashmap_iter_next",
             "fs_file_open", "fs_file_close", "fs_file_read", "fs_file_write",
             "fs_file_read_line", "fs_file_write_string", "fs_file_seek", "fs_file_tell",
-            "fs_math_abs", "fs_math_min", "fs_math_max", "fs_math_pow", "fs_math_sqrt", "fs_math_clamp"
+            "fs_math_abs", "fs_math_min", "fs_math_max", "fs_math_pow", "fs_math_sqrt", "fs_math_clamp",
+            "fs_int_to_string", "fs_bool_to_string"
         ]);
         modules.forEach((mod, path) => {
             mod.program.statements.forEach(stmt => {
@@ -684,6 +685,8 @@ export class LLVMEmitter {
             this.output += `declare i32 @fs_file_write_string(%File*, %String*)\n`;
             this.output += `declare i32 @fs_file_seek(%File*, i64, i32)\n`;
             this.output += `declare i64 @fs_file_tell(%File*)\n`;
+            this.output += `declare %String @fs_int_to_string(i32)\n`;
+            this.output += `declare %String @fs_bool_to_string(i1)\n`;
             this.output += `declare i32 @printf(i8*, ...)\n`;
             this.output += `declare i8* @malloc(i32)\n`;
             this.output += `declare void @free(i8*)\n`;
@@ -835,6 +838,65 @@ export class LLVMEmitter {
         const strType = this.getStringType();
         this.output += `  ${reg} = call ${strType} @fs_string_from_literal(i8* getelementptr inbounds ([${len} x i8], [${len} x i8]* ${constName}, i32 0, i32 0), i32 ${len})\n`;
         return reg;
+    }
+
+    /**
+     * Emit an interpolated string: f"Hello {name}, age {age}!"
+     * Desugars to a chain of fs_string_concat calls.
+     * Non-string expressions are converted via fs_int_to_string / fs_bool_to_string.
+     */
+    private emitInterpolatedString(expr: AST.InterpolatedStringExpression): string {
+        const strType = this.getStringType();
+        // Convert each part to a string register
+        const stringRegs: string[] = [];
+        for (const part of expr.parts) {
+            if (part instanceof AST.StringLiteral) {
+                if (part.value.length === 0) continue; // skip empty literals
+                stringRegs.push(this.emitStringLiteral(part));
+            } else {
+                const exprType = this.getExpressionType(part);
+                const val = this.emitExpression(part);
+                if (this.isStringType(exprType)) {
+                    stringRegs.push(val);
+                } else if (exprType === "i32") {
+                    const reg = this.nextRegister();
+                    this.output += `  ${reg} = call ${strType} @fs_int_to_string(i32 ${val})\n`;
+                    stringRegs.push(reg);
+                } else if (exprType === "i1") {
+                    const reg = this.nextRegister();
+                    this.output += `  ${reg} = call ${strType} @fs_bool_to_string(i1 ${val})\n`;
+                    stringRegs.push(reg);
+                } else {
+                    // Fallback: try int
+                    const reg = this.nextRegister();
+                    this.output += `  ${reg} = call ${strType} @fs_int_to_string(i32 ${val})\n`;
+                    stringRegs.push(reg);
+                }
+            }
+        }
+
+        if (stringRegs.length === 0) {
+            // Empty f-string: return empty string
+            return this.emitStringLiteral(new AST.StringLiteral(expr.token, ""));
+        }
+        if (stringRegs.length === 1) {
+            return stringRegs[0];
+        }
+
+        // Chain concat: fold left
+        let result = stringRegs[0];
+        for (let i = 1; i < stringRegs.length; i++) {
+            const leftPtr = this.nextRegister();
+            this.output += `  ${leftPtr} = alloca ${strType}\n`;
+            this.output += `  store ${strType} ${result}, ${strType}* ${leftPtr}\n`;
+            const rightPtr = this.nextRegister();
+            this.output += `  ${rightPtr} = alloca ${strType}\n`;
+            this.output += `  store ${strType} ${stringRegs[i]}, ${strType}* ${rightPtr}\n`;
+            const concatReg = this.nextRegister();
+            this.output += `  ${concatReg} = call ${strType} @fs_string_concat(${strType}* ${leftPtr}, ${strType}* ${rightPtr})\n`;
+            result = concatReg;
+        }
+        return result;
     }
 
     // Emit a raw i8* pointer to a null-terminated string constant (for C interop, e.g. printf format strings)
@@ -1357,6 +1419,7 @@ export class LLVMEmitter {
         if (expr instanceof AST.BooleanLiteral) return "i1";
         if (expr instanceof AST.NullLiteral) return "i8*";
         if (expr instanceof AST.StringLiteral) return this.runtimeStringType || "%String";
+        if (expr instanceof AST.InterpolatedStringExpression) return this.runtimeStringType || "%String";
         if (expr instanceof AST.StructLiteral) {
             const sym = this.currentScope?.resolve(expr.name.value);
             let mangledName = this.getMangledName(expr.name.value, this.currentModulePath);
@@ -1513,6 +1576,7 @@ export class LLVMEmitter {
         if (expr instanceof AST.BooleanLiteral) return expr.value ? "1" : "0";
         if (expr instanceof AST.NullLiteral) return "null";
         if (expr instanceof AST.StringLiteral) return this.emitStringLiteral(expr);
+        if (expr instanceof AST.InterpolatedStringExpression) return this.emitInterpolatedString(expr);
         if (expr instanceof AST.StructLiteral) return this.emitStructLiteral(expr);
         if (expr instanceof AST.CastExpression) return this.emitCastExpression(expr);
         if (expr instanceof AST.AddressOfExpression) return this.emitAddressOfExpression(expr);

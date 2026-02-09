@@ -405,4 +405,71 @@ describe("Parser", () => {
       expect(expr).toBeInstanceOf(AST.InfixExpression);
       expect(expr.operator).toBe("*");
   });
+
+  // ---- String Interpolation ----
+
+  it("should parse f-string with single interpolation", () => {
+    const input = `let x = f"Hello {name}!"`;
+    const lexer = new Lexer(input);
+    const parser = new Parser(lexer);
+    const program = parser.ParseProgram();
+    expect(parser.getErrors().length).toBe(0);
+
+    const stmt = program.statements[0] as AST.LetStatement;
+    const expr = stmt.value as AST.InterpolatedStringExpression;
+    expect(expr).toBeInstanceOf(AST.InterpolatedStringExpression);
+    expect(expr.parts.length).toBe(3); // "Hello ", name, "!"
+    expect((expr.parts[0] as AST.StringLiteral).value).toBe("Hello ");
+    expect((expr.parts[1] as AST.Identifier).value).toBe("name");
+    expect((expr.parts[2] as AST.StringLiteral).value).toBe("!");
+  });
+
+  it("should parse f-string with multiple interpolations", () => {
+    const input = `let x = f"{a} and {b}"`;
+    const lexer = new Lexer(input);
+    const parser = new Parser(lexer);
+    const program = parser.ParseProgram();
+    expect(parser.getErrors().length).toBe(0);
+
+    const stmt = program.statements[0] as AST.LetStatement;
+    const expr = stmt.value as AST.InterpolatedStringExpression;
+    expect(expr).toBeInstanceOf(AST.InterpolatedStringExpression);
+    // parts: "", a, " and ", b, ""
+    expect(expr.parts.length).toBe(5);
+    expect((expr.parts[0] as AST.StringLiteral).value).toBe("");
+    expect((expr.parts[1] as AST.Identifier).value).toBe("a");
+    expect((expr.parts[2] as AST.StringLiteral).value).toBe(" and ");
+    expect((expr.parts[3] as AST.Identifier).value).toBe("b");
+    expect((expr.parts[4] as AST.StringLiteral).value).toBe("");
+  });
+
+  it("should parse f-string with expression in interpolation", () => {
+    const input = `let x = f"result: {a + b}"`;
+    const lexer = new Lexer(input);
+    const parser = new Parser(lexer);
+    const program = parser.ParseProgram();
+    expect(parser.getErrors().length).toBe(0);
+
+    const stmt = program.statements[0] as AST.LetStatement;
+    const expr = stmt.value as AST.InterpolatedStringExpression;
+    expect(expr).toBeInstanceOf(AST.InterpolatedStringExpression);
+    expect(expr.parts.length).toBe(3); // "result: ", (a + b), ""
+    const infixExpr = expr.parts[1] as AST.InfixExpression;
+    expect(infixExpr).toBeInstanceOf(AST.InfixExpression);
+    expect(infixExpr.operator).toBe("+");
+  });
+
+  it("should parse f-string with no interpolations as InterpolatedStringExpression", () => {
+    const input = `let x = f"just text"`;
+    const lexer = new Lexer(input);
+    const parser = new Parser(lexer);
+    const program = parser.ParseProgram();
+    expect(parser.getErrors().length).toBe(0);
+
+    const stmt = program.statements[0] as AST.LetStatement;
+    const expr = stmt.value as AST.InterpolatedStringExpression;
+    expect(expr).toBeInstanceOf(AST.InterpolatedStringExpression);
+    expect(expr.parts.length).toBe(1);
+    expect((expr.parts[0] as AST.StringLiteral).value).toBe("just text");
+  });
 });

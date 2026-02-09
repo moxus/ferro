@@ -620,6 +620,17 @@ export class Analyzer {
             return this.visitClosureExpression(expr);
         }
 
+        if (expr instanceof AST.InterpolatedStringExpression) {
+            for (const part of expr.parts) {
+                if (part instanceof AST.StringLiteral) continue;
+                const t = this.visitExpression(part);
+                if (t.kind !== "primitive" || !["int", "string", "bool", "i8", "any", "unknown"].includes(t.name)) {
+                    this.error(`Cannot interpolate type ${typeToString(t)} in f-string (expected int, string, or bool)`, expr.token);
+                }
+            }
+            return StringType;
+        }
+
         return UnknownType;
     }
 
@@ -757,6 +768,12 @@ export class Analyzer {
         } else if (node instanceof AST.RangeExpression) {
             this.collectIdentifiers(node.start, result);
             this.collectIdentifiers(node.end, result);
+        } else if (node instanceof AST.InterpolatedStringExpression) {
+            for (const part of node.parts) {
+                if (!(part instanceof AST.StringLiteral)) {
+                    this.collectIdentifiers(part, result);
+                }
+            }
         }
         // ClosureExpression: do NOT recurse — nested closures compute their own captures
     }

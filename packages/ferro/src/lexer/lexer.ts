@@ -168,6 +168,11 @@ export class Lexer {
       default:
         if (this.isLetter(this.ch)) {
           const literal = this.readIdentifier();
+          // f-string: f"..."
+          if (literal === "f" && this.ch === '"') {
+            const fstrContent = this.readFString();
+            return { type: TokenType.FString, literal: fstrContent, line, column: col };
+          }
           const type = lookupIdent(literal);
           return { type, literal, line, column: col };
         } else if (this.isDigit(this.ch)) {
@@ -227,6 +232,40 @@ export class Lexer {
     const str = this.input.slice(position, this.position);
     this.readChar(); // Consume the closing quote
     return str;
+  }
+
+  private readFString(): string {
+    // curToken is '"' (the opening quote after 'f')
+    this.readChar(); // consume opening "
+    let result = "";
+    while (this.ch !== null) {
+      if (this.ch === '"') {
+        this.readChar(); // consume closing "
+        break;
+      }
+      if (this.ch === '{') {
+        result += '{';
+        this.readChar();
+        let depth = 1;
+        while (this.ch !== null && depth > 0) {
+          const c = this.ch as string;
+          if (c === '{') depth++;
+          if (c === '}') depth--;
+          if (depth > 0) {
+            result += this.ch;
+            this.readChar();
+          }
+        }
+        if ((this.ch as string) === '}') {
+          result += '}';
+          this.readChar();
+        }
+      } else {
+        result += this.ch;
+        this.readChar();
+      }
+    }
+    return result;
   }
 
   private skipWhitespace() {

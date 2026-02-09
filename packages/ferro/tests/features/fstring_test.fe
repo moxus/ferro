@@ -1,0 +1,22 @@
+export fn main() {
+    let name = "Ferro"
+    let version = 3
+    let msg = f"Hello from {name} v{version}!"
+    print(msg)
+
+    // Test with expressions
+    let a = 10
+    let b = 20
+    print(f"sum: {a + b}")
+
+    // Test with boolean
+    let ok = true
+    print(f"status: {ok}")
+
+    // Test with just text (no interpolation)
+    print(f"no interpolation here")
+
+    // Test adjacent interpolations
+    print(f"{a}{b}")
+}
+main()

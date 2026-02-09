@@ -64,6 +64,7 @@ export class Parser {
     this.registerPrefix(TokenType.Identifier, this.parseIdentifier.bind(this));
     this.registerPrefix(TokenType.Number, this.parseIntegerLiteral.bind(this));
     this.registerPrefix(TokenType.String, this.parseStringLiteral.bind(this));
+    this.registerPrefix(TokenType.FString, this.parseFStringLiteral.bind(this));
     this.registerPrefix(TokenType.True, this.parseBoolean.bind(this));
     this.registerPrefix(TokenType.False, this.parseBoolean.bind(this));
     this.registerPrefix(TokenType.Null, this.parseNull.bind(this));
@@ -128,6 +129,11 @@ export class Parser {
 
   public getErrors(): { msg: string, line: number, col: number }[] {
     return this.errors;
+  }
+
+  /** Parse a single expression (used for f-string sub-parsing). */
+  public parseExpressionPublic(): AST.Expression | null {
+    return this.parseExpression(Precedence.LOWEST);
   }
 
   private parseStatement(): AST.Statement | null {
@@ -603,6 +609,52 @@ export class Parser {
 
   private parseStringLiteral(): AST.Expression {
     return new AST.StringLiteral(this.curToken, this.curToken.literal);
+  }
+
+  private parseFStringLiteral(): AST.Expression {
+    const token = this.curToken;
+    const raw = token.literal; // e.g. "Hello {name}, age {age}!"
+    const parts: (AST.StringLiteral | AST.Expression)[] = [];
+
+    let i = 0;
+    let currentLiteral = "";
+
+    while (i < raw.length) {
+      if (raw[i] === '{') {
+        // Push accumulated literal
+        parts.push(new AST.StringLiteral(token, currentLiteral));
+        currentLiteral = "";
+
+        // Find matching }
+        i++; // skip {
+        let depth = 1;
+        let exprStr = "";
+        while (i < raw.length && depth > 0) {
+          if (raw[i] === '{') depth++;
+          if (raw[i] === '}') depth--;
+          if (depth > 0) exprStr += raw[i];
+          i++;
+        }
+
+        // Sub-parse the expression
+        const subLexer = new Lexer(exprStr);
+        const subParser = new Parser(subLexer);
+        const expr = subParser.parseExpressionPublic();
+        if (expr) {
+          parts.push(expr);
+        } else {
+          this.errors.push({ msg: `Failed to parse expression in f-string: ${exprStr}`, line: token.line, col: token.column });
+        }
+      } else {
+        currentLiteral += raw[i];
+        i++;
+      }
+    }
+
+    // Push trailing literal
+    parts.push(new AST.StringLiteral(token, currentLiteral));
+
+    return new AST.InterpolatedStringExpression(token, parts);
   }
 
   private parseBoolean(): AST.Expression {

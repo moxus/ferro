@@ -146,6 +146,94 @@ export fn fs_print_int(n: i32) {
     }
 }
 
+// ---- Type Conversion ----
+
+// Convert an integer to a string
+export fn fs_int_to_string(n: i32) -> fs_String {
+    // Handle zero
+    if (n == 0) {
+        let mut s: fs_String = fs_string_alloc(1);
+        unsafe {
+            if (s.ptr != null) {
+                *(s.ptr) = 48 as i8;
+                *(s.ptr + 1) = 0 as i8;
+                s.len = 1;
+            };
+        }
+        return s;
+    };
+    let mut is_negative: bool = false;
+    let mut val: i32 = n;
+    if (n < 0) {
+        is_negative = true;
+        val = 0 - n;
+    };
+    // Count digits
+    let mut digit_count: i32 = 0;
+    let mut tmp: i32 = val;
+    while (tmp > 0) {
+        digit_count = digit_count + 1;
+        tmp = tmp / 10;
+    }
+    let mut total_len: i32 = digit_count;
+    if (is_negative) {
+        total_len = total_len + 1;
+    };
+    let mut s: fs_String = fs_string_alloc(total_len);
+    unsafe {
+        if (s.ptr != null) {
+            let mut pos: i32 = total_len - 1;
+            let mut v: i32 = val;
+            while (v > 0) {
+                let mut digit: i32 = v - (v / 10) * 10;
+                *(s.ptr + pos) = (digit + 48) as i8;
+                pos = pos - 1;
+                v = v / 10;
+            }
+            if (is_negative) {
+                *(s.ptr) = 45 as i8;
+            };
+            *(s.ptr + total_len) = 0 as i8;
+            s.len = total_len;
+        };
+    }
+    return s;
+}
+
+// Convert a boolean to a string ("true" or "false")
+export fn fs_bool_to_string(b: bool) -> fs_String {
+    if (b) {
+        // "true" = 4 bytes: 116 114 117 101
+        let mut s: fs_String = fs_string_alloc(4);
+        unsafe {
+            if (s.ptr != null) {
+                *(s.ptr) = 116 as i8;
+                *(s.ptr + 1) = 114 as i8;
+                *(s.ptr + 2) = 117 as i8;
+                *(s.ptr + 3) = 101 as i8;
+                *(s.ptr + 4) = 0 as i8;
+                s.len = 4;
+            };
+        }
+        return s;
+    } else {
+        // "false" = 5 bytes: 102 97 108 115 101
+        let mut s: fs_String = fs_string_alloc(5);
+        unsafe {
+            if (s.ptr != null) {
+                *(s.ptr) = 102 as i8;
+                *(s.ptr + 1) = 97 as i8;
+                *(s.ptr + 2) = 108 as i8;
+                *(s.ptr + 3) = 115 as i8;
+                *(s.ptr + 4) = 101 as i8;
+                *(s.ptr + 5) = 0 as i8;
+                s.len = 5;
+            };
+        }
+        return s;
+    }
+}
+
 // ---- String Utilities ----
 
 // Compare two strings for equality (byte-by-byte)
