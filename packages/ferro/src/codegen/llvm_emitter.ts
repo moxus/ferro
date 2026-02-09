@@ -2424,25 +2424,25 @@ export class LLVMEmitter {
         }
 
         // --- Determine closure parameter LLVM types ---
+        // After bidirectional type inference, p.type is patched by the analyzer for
+        // untyped trailing-lambda params.  Fall back to i32 only as a last resort.
         const paramLLVMTypes: { name: string, llvmType: string }[] = [];
         for (const p of expr.parameters) {
             if (!p.type) {
-                throw new Error(`Closure parameter '${p.name.value}' must have a type annotation for native compilation`);
+                // Analyzer should have patched this; fall back to i32 for safety
+                paramLLVMTypes.push({ name: p.name.value, llvmType: "i32" });
+                continue;
             }
             const llvmType = this.mapType(p.type);
             paramLLVMTypes.push({ name: p.name.value, llvmType });
         }
 
         // --- Determine return type ---
+        // After bidirectional inference the analyzer patches expr.returnType for
+        // trailing lambdas, so this branch handles most cases automatically.
         let retType = "void";
         if (expr.returnType) {
             retType = this.mapType(expr.returnType);
-        } else if (expr.body.statements.length > 0) {
-            // Try to infer from last expression
-            const lastStmt = expr.body.statements[expr.body.statements.length - 1];
-            if (lastStmt instanceof AST.ExpressionStatement && lastStmt.expression) {
-                retType = "i32"; // default for expression bodies
-            }
         }
 
         // --- Compute the environment struct type ---

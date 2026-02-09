@@ -1,4 +1,5 @@
 import * as AST from "../ast/ast";
+import { Token, TokenType } from "../token";
 import { SymbolTable } from "./symbol_table";
 import { Type, IntType, StringType, BoolType, VoidType, NullType, FileType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
 
@@ -317,6 +318,19 @@ export class Analyzer {
             }
 
             const fnType = this.visitExpression(expr.function);
+
+            // Visit arguments — with bidirectional inference for closure args
+            expr.arguments.forEach((arg, i) => {
+                if (arg instanceof AST.ClosureExpression && fnType.kind === "function" && i < fnType.params.length) {
+                    const paramType = fnType.params[i];
+                    if (paramType.kind === "function") {
+                        this.visitClosureExpression(arg, paramType.params, paramType.returnType);
+                        return;
+                    }
+                }
+                this.visitExpression(arg);
+            });
+
             if (fnType.kind === "function") {
                 return fnType.returnType;
             }
@@ -353,6 +367,19 @@ export class Analyzer {
                 });
                 return enumType;
             }
+
+            // Recognize Vec::<T>::new() and HashMap::<K,V>::new() constructors
+            const receiverName = expr.receiver.value;
+            if (expr.method.value === "new" && expr.genericTypeArgs && expr.genericTypeArgs.length > 0) {
+                if (receiverName === "Vec" || receiverName === "HashMap") {
+                    return {
+                        kind: "generic_inst",
+                        name: receiverName,
+                        args: expr.genericTypeArgs.map(t => this.resolveType(t))
+                    };
+                }
+            }
+
             return UnknownType;
         }
 
@@ -432,25 +459,45 @@ export class Analyzer {
 
         if (expr instanceof AST.MethodCallExpression) {
             const receiverType = this.visitExpression(expr.object);
-            expr.arguments.forEach(a => this.visitExpression(a));
             const methodName = expr.method.value;
 
-            // Vec method return types
+            // Vec method return types — with bidirectional closure inference
             if (receiverType.kind === "generic_inst" && receiverType.name === "Vec" && receiverType.args.length > 0) {
                 const elemType = receiverType.args[0];
-                if (methodName === "get" || methodName === "pop") return elemType;
-                if (methodName === "len") return IntType;
-                if (methodName === "filter" || methodName === "collect") {
-                    return { kind: "generic_inst", name: "Vec", args: [elemType] };
-                }
+
                 if (methodName === "map" && expr.arguments.length > 0) {
                     const closureArg = expr.arguments[0];
                     if (closureArg instanceof AST.ClosureExpression) {
-                        const closureType = this.visitClosureExpression(closureArg);
+                        // Infer closure param from Vec element type; return type inferred from body
+                        const closureType = this.visitClosureExpression(closureArg, [elemType]);
                         if (closureType.kind === "function") {
                             return { kind: "generic_inst", name: "Vec", args: [closureType.returnType] };
                         }
+                    } else {
+                        this.visitExpression(closureArg);
                     }
+                    // Visit remaining args normally
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return { kind: "generic_inst", name: "Vec", args: [elemType] };
+                }
+
+                if (methodName === "filter" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        // Infer closure param from Vec element type; return type is bool
+                        this.visitClosureExpression(closureArg, [elemType], BoolType);
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return { kind: "generic_inst", name: "Vec", args: [elemType] };
+                }
+
+                // Non-closure methods: visit args normally
+                expr.arguments.forEach(a => this.visitExpression(a));
+                if (methodName === "get" || methodName === "pop") return elemType;
+                if (methodName === "len") return IntType;
+                if (methodName === "collect") {
                     return { kind: "generic_inst", name: "Vec", args: [elemType] };
                 }
                 return UnknownType;
@@ -460,6 +507,7 @@ export class Analyzer {
             if (receiverType.kind === "generic_inst" && receiverType.name === "HashMap" && receiverType.args.length >= 2) {
                 const keyType = receiverType.args[0];
                 const valueType = receiverType.args[1];
+                expr.arguments.forEach(a => this.visitExpression(a));
                 if (methodName === "get") return valueType;
                 if (methodName === "len") return IntType;
                 if (methodName === "contains_key") return BoolType;
@@ -468,6 +516,8 @@ export class Analyzer {
                 return UnknownType;
             }
 
+            // Default: visit args normally
+            expr.arguments.forEach(a => this.visitExpression(a));
             return UnknownType;
         }
 
@@ -478,7 +528,7 @@ export class Analyzer {
         return UnknownType;
     }
 
-    private visitClosureExpression(expr: AST.ClosureExpression): Type {
+    private visitClosureExpression(expr: AST.ClosureExpression, expectedParamTypes?: Type[], expectedReturnType?: Type): Type {
         // --- Capture analysis: find free variables ---
         const referencedVars = new Set<string>();
         this.collectIdentifiers(expr.body, referencedVars);
@@ -502,8 +552,18 @@ export class Analyzer {
         this.scope = this.scope.createChild();
 
         const paramTypes: Type[] = [];
-        expr.parameters.forEach(p => {
-            const pType = p.type ? this.resolveType(p.type) : UnknownType;
+        expr.parameters.forEach((p, i) => {
+            let pType: Type;
+            if (p.type) {
+                // Explicitly typed param — use as-is
+                pType = this.resolveType(p.type);
+            } else if (expectedParamTypes && i < expectedParamTypes.length && expectedParamTypes[i].kind !== "unknown") {
+                // Bidirectional inference: patch the AST node with the expected type
+                pType = expectedParamTypes[i];
+                p.type = this.typeToASTType(pType, p.token);
+            } else {
+                pType = UnknownType;
+            }
             paramTypes.push(pType);
             this.scope.define(p.name.value, pType, false, p.token.line, this.currentModulePath);
         });
@@ -511,10 +571,39 @@ export class Analyzer {
         // Visit the body
         expr.body.statements.forEach(s => this.visitStatement(s));
 
+        // --- Determine return type ---
+        let retType: Type;
+        if (expr.returnType) {
+            retType = this.resolveType(expr.returnType);
+        } else if (expectedReturnType && expectedReturnType.kind !== "unknown") {
+            // Bidirectional inference: use expected return type and patch AST
+            retType = expectedReturnType;
+            expr.returnType = this.typeToASTType(retType, expr.token);
+        } else {
+            // Infer from last expression in the body
+            retType = this.inferClosureReturnType(expr);
+            if (retType.kind !== "unknown") {
+                expr.returnType = this.typeToASTType(retType, expr.token);
+            }
+        }
+
         this.scope = prevScope;
 
-        const retType = expr.returnType ? this.resolveType(expr.returnType) : UnknownType;
         return { kind: "function", params: paramTypes, returnType: retType };
+    }
+
+    /** Infer the return type of a closure from its last expression. */
+    private inferClosureReturnType(expr: AST.ClosureExpression): Type {
+        const stmts = expr.body.statements;
+        if (stmts.length === 0) return VoidType;
+        const lastStmt = stmts[stmts.length - 1];
+        if (lastStmt instanceof AST.ExpressionStatement && lastStmt.expression) {
+            return this.visitExpression(lastStmt.expression);
+        }
+        if (lastStmt instanceof AST.ReturnStatement && lastStmt.returnValue) {
+            return this.visitExpression(lastStmt.returnValue);
+        }
+        return VoidType;
     }
 
     /** Recursively collect all Identifier references in an AST node. Does NOT recurse into nested ClosureExpressions. */
@@ -627,6 +716,44 @@ export class Analyzer {
         }
 
         return UnknownType;
+    }
+
+    /** Convert an analyzer Type back to an AST Type node (for patching untyped closure params). */
+    private typeToASTType(t: Type, refToken: Token): AST.Type {
+        const synth: Token = { type: TokenType.Identifier, literal: "", line: refToken.line, column: refToken.column };
+        if (t.kind === "primitive") {
+            synth.literal = t.name;
+            return new AST.TypeIdentifier(synth, t.name);
+        }
+        if (t.kind === "pointer") {
+            synth.type = TokenType.Star;
+            synth.literal = "*";
+            return new AST.PointerType(synth, this.typeToASTType(t.elementType, refToken));
+        }
+        if (t.kind === "generic_inst") {
+            synth.literal = t.name;
+            return new AST.TypeIdentifier(synth, t.name, t.args.map(a => this.typeToASTType(a, refToken)));
+        }
+        if (t.kind === "generic_param") {
+            synth.literal = t.name;
+            return new AST.TypeIdentifier(synth, t.name);
+        }
+        if (t.kind === "enum") {
+            synth.literal = t.name;
+            return new AST.TypeIdentifier(synth, t.name);
+        }
+        if (t.kind === "struct") {
+            synth.literal = t.name;
+            return new AST.TypeIdentifier(synth, t.name);
+        }
+        if (t.kind === "function") {
+            const paramTypes = t.params.map(p => this.typeToASTType(p, refToken));
+            const returnType = this.typeToASTType(t.returnType, refToken);
+            return new AST.FunctionTypeNode(synth, paramTypes, returnType);
+        }
+        // Fallback: unknown → "any"
+        synth.literal = "any";
+        return new AST.TypeIdentifier(synth, "any");
     }
 
     private validateTraitBounds(funcName: string, typeArgs: AST.Type[], constraints: Map<string, string[]>, token: { line: number, column: number }) {

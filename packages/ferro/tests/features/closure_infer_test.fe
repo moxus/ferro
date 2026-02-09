@@ -1,0 +1,53 @@
+// Test: Bidirectional type inference for closure params
+
+// --- Vec.map with inferred params (trailing lambda) ---
+let mut nums = Vec::<int>::new();
+nums.push(1);
+nums.push(2);
+nums.push(3);
+
+// Trailing lambda with explicit param name: param type inferred from Vec<int>
+let doubled = nums.map { x -> x * 2 };
+let mut dsum: int = 0;
+for (d in doubled) {
+    dsum = dsum + d;
+}
+print(dsum);
+// Expected: 12
+
+// Implicit `it` param: type inferred from Vec<int>
+let tripled = nums.map { it * 3 };
+let mut tsum: int = 0;
+for (t in tripled) {
+    tsum = tsum + t;
+}
+print(tsum);
+// Expected: 18
+
+// --- Vec.filter with inferred params ---
+let big = nums.filter { x -> x > 1 };
+print(big.len());
+// Expected: 2
+
+// Filter with implicit `it`
+let small = nums.filter { it <= 1 };
+print(small.len());
+// Expected: 1
+
+// --- Mixed: explicit types still work ---
+let explicit = nums.map((x: int) -> int { x + 10 });
+let mut esum: int = 0;
+for (e in explicit) {
+    esum = esum + e;
+}
+print(esum);
+// Expected: 36  (11+12+13)
+
+// --- Function call inference with trailing lambda ---
+fn apply(x: int, f: (int) -> int) -> int {
+    f(x)
+}
+
+let result = apply(7) { x -> x * 3 };
+print(result);
+// Expected: 21
