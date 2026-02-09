@@ -19,12 +19,18 @@ function _getType(obj: any) {
 }
 
 interface Point {
-  x: number;
-  y: number;
+  x: i32;
+  y: i32;
 }
-function test_member(p: any) {
+function print_ptr(val: any) {
 return ;
 };
-function main() {
-const p: Point = { x: 10, y: 20 };
+export function main() {
+let x: i32 = 42;
+const ptr: *i32 = ;
+print_ptr(ptr);
+print_ptr();
+const p = { x: 10, y: 20 };
+return print_ptr();
 };
+main();

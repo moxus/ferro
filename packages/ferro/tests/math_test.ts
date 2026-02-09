@@ -17,14 +17,19 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
-
-interface Point {
-  x: number;
-  y: number;
-}
-function test_member(p: any) {
-return ;
-};
-function main() {
-const p: Point = { x: 10, y: 20 };
-};
+print(Math.abs(5));
+print(Math.abs(-3));
+print(Math.abs(0));
+print(Math.min(3, 7));
+print(Math.max(3, 7));
+print(Math.min(-1, 1));
+print(Math.max(-1, 1));
+print(Math.pow(2, 10));
+print(Math.pow(3, 3));
+print(Math.pow(5, 0));
+print(Math.floor(Math.sqrt(100)));
+print(Math.floor(Math.sqrt(81)));
+print(Math.floor(Math.sqrt(2)));
+print(Math.min(Math.max(5, 0), 10));
+print(Math.min(Math.max(-3, 0), 10));
+print(Math.min(Math.max(15, 0), 10));

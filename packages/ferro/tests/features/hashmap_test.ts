@@ -17,14 +17,16 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
-
-interface Point {
-  x: number;
-  y: number;
-}
-function test_member(p: any) {
-return ;
-};
-function main() {
-const p: Point = { x: 10, y: 20 };
-};
+let m = new Map();
+m.insert(1, 100);
+m.insert(2, 200);
+m.insert(3, 300);
+print(m.len());
+print(m.get(1));
+print(m.get(2));
+print(m.get(3));
+print(m.contains_key(2));
+print(m.contains_key(99));
+m.remove(2);
+print(m.len());
+print(m.contains_key(2));

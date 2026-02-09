@@ -1,5 +1,5 @@
 
-// FerroScript Runtime
+// Ferro Runtime
 class _ResultError extends Error {
   public error: any;
   constructor(error: any) { super(); this.error = error; }
@@ -17,16 +17,21 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
-interface Point {
-  x: number;
-  y: number;
+interface Wrapper {
+  value: number;
 }
-const Mag = {
-  magnitude: new Map()
+const Extract = {
+  get_value: new Map(),
+  doubled: new Map()
 };
-Mag.magnitude.set("Point", function(self: any) {
-return self.x + self.y;
+Extract.get_value.set("Wrapper", function(self: any) {
+return self.value;
 });
-const p: Point = { x: 10, y: 20 };
-const m: int = Mag.magnitude.get(_getType(p))(p);
-print(m);
+Extract.doubled.set("Wrapper", function(self: any) {
+return self.value + self.value;
+});
+const w: Wrapper = { value: 21 };
+const v: int = Extract.get_value.get(_getType(w))(w);
+const d: int = Extract.doubled.get(_getType(w))(w);
+print(v);
+print(d);

@@ -22,9 +22,6 @@ interface Point {
   x: number;
   y: number;
 }
-function test_member(p: any) {
-return ;
-};
 function main() {
 const p: Point = { x: 10, y: 20 };
 };
