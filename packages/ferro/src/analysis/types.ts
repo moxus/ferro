@@ -54,7 +54,14 @@ export function typesEqual(a: Type, b: Type): boolean {
         return a.name === b.name && a.args.length === b.args.length &&
             a.args.every((arg, i) => typesEqual(arg, b.args[i]));
     }
-    // TODO: Function and Result comparison
+    if (a.kind === "function" && b.kind === "function") {
+        return a.params.length === b.params.length &&
+            a.params.every((p, i) => typesEqual(p, b.params[i])) &&
+            typesEqual(a.returnType, b.returnType);
+    }
+    if (a.kind === "result" && b.kind === "result") {
+        return typesEqual(a.ok, b.ok) && typesEqual(a.err, b.err);
+    }
     return false;
 }
 
@@ -68,6 +75,8 @@ export function typeToString(t: Type): string {
         if (t.typeParams.length > 0) return `${t.name}<${t.typeParams.join(", ")}>`;
         return t.name;
     }
+    if (t.kind === "result") return `Result<${typeToString(t.ok)}, ${typeToString(t.err)}>`;
+    if (t.kind === "function") return `(${t.params.map(typeToString).join(", ")}) -> ${typeToString(t.returnType)}`;
     if (t.kind === "unknown") return "?";
     return "complex";
 }

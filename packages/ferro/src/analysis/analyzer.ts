@@ -23,6 +23,8 @@ export class Analyzer {
     private functionConstraints: Map<string, Map<string, string[]>> = new Map();  // funcName -> typeConstraints
     // Store impl blocks for IntoIterator lookup
     private implBlockStore: AST.ImplBlock[] = [];
+    // Track whether the current function returns Result (for ? operator validation)
+    private currentFnReturnsResult: Type | null = null;
 
     public analyze(program: AST.Program, initialScope?: SymbolTable, modulePath: string = "") {
         this.currentModulePath = modulePath;
@@ -35,6 +37,9 @@ export class Analyzer {
             this.scope.define("print", { kind: "function", params: [], returnType: VoidType }, false, 0);
             this.scope.define("drop", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: VoidType }, false, 0);
             this.scope.define("File", FileType, false, 0);
+            // Built-in Result constructors
+            this.scope.define("Ok", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: { kind: "result", ok: { kind: "primitive", name: "any" }, err: { kind: "primitive", name: "any" } } }, false, 0);
+            this.scope.define("Err", { kind: "function", params: [{ kind: "primitive", name: "any" }], returnType: { kind: "result", ok: { kind: "primitive", name: "any" }, err: { kind: "primitive", name: "any" } } }, false, 0);
         }
 
         program.statements.forEach(stmt => this.visitStatement(stmt));
@@ -308,8 +313,9 @@ export class Analyzer {
             const prevContext = this.genericContext;
             this.genericContext = [...prevContext, ...expr.typeParams];
 
+            const retType = expr.returnType ? this.resolveType(expr.returnType) : VoidType;
+
             if (expr.name) {
-                const retType = expr.returnType ? this.resolveType(expr.returnType) : VoidType;
                 const paramTypes = expr.parameters.map(p => this.resolveType(p.type));
                 this.scope.define(expr.name, { kind: "function", params: paramTypes, returnType: retType }, false, expr.token.line, this.currentModulePath);
                 // Store type constraints for call-site validation
@@ -326,12 +332,21 @@ export class Analyzer {
                 this.scope.define(p.name.value, pType, false, p.token.line, this.currentModulePath);
             });
 
+            // Track if this function returns Result (for ? operator validation)
+            const prevFnReturnsResult = this.currentFnReturnsResult;
+            if (retType.kind === "result") {
+                this.currentFnReturnsResult = retType;
+            } else {
+                this.currentFnReturnsResult = null;
+            }
+
             this.visitBlockStatement(expr.body);
 
+            this.currentFnReturnsResult = prevFnReturnsResult;
             this.scope = prevScope;
             this.genericContext = prevContext;
 
-            return { kind: "function", params: expr.parameters.map(p => this.resolveType(p.type)), returnType: expr.returnType ? this.resolveType(expr.returnType) : VoidType };
+            return { kind: "function", params: expr.parameters.map(p => this.resolveType(p.type)), returnType: retType };
         }
 
         if (expr instanceof AST.CallExpression) {
@@ -356,6 +371,27 @@ export class Analyzer {
             }
 
             const fnType = this.visitExpression(expr.function);
+
+            // Built-in Ok(value) / Err(error) constructors — infer Result type from argument
+            if (expr.function instanceof AST.Identifier) {
+                const name = expr.function.value;
+                if (name === "Ok" && expr.arguments.length === 1) {
+                    const okType = this.visitExpression(expr.arguments[0]);
+                    // Infer error type from enclosing function's return type if available
+                    const errType: Type = (this.currentFnReturnsResult && this.currentFnReturnsResult.kind === "result")
+                        ? this.currentFnReturnsResult.err
+                        : UnknownType;
+                    return { kind: "result", ok: okType, err: errType };
+                }
+                if (name === "Err" && expr.arguments.length === 1) {
+                    const errType = this.visitExpression(expr.arguments[0]);
+                    // Infer ok type from enclosing function's return type if available
+                    const okType: Type = (this.currentFnReturnsResult && this.currentFnReturnsResult.kind === "result")
+                        ? this.currentFnReturnsResult.ok
+                        : UnknownType;
+                    return { kind: "result", ok: okType, err: errType };
+                }
+            }
 
             // Visit arguments — with bidirectional inference for closure args
             expr.arguments.forEach((arg, i) => {
@@ -435,7 +471,35 @@ export class Analyzer {
             for (const arm of expr.arms) {
                 const pat = arm.pattern;
                 if (pat instanceof AST.EnumPattern) {
-                    if (matchedType.kind === "enum") {
+                    // Support Result<T, E> pattern matching: Result::Ok(v), Result::Err(e)
+                    if (matchedType.kind === "result" && pat.enumName.value === "Result") {
+                        const variantName = pat.variantName.value;
+                        if (variantName === "Ok") {
+                            if (pat.bindings.length !== 1) {
+                                this.error(`Pattern for 'Result::Ok' binds ${pat.bindings.length} variable(s), but variant has 1 field`, arm.token);
+                            } else {
+                                const prevScope = this.scope;
+                                this.scope = this.scope.createChild();
+                                this.scope.define(pat.bindings[0].value, matchedType.ok, false, arm.token.line, this.currentModulePath);
+                                this.visitStatement(arm.body);
+                                this.scope = prevScope;
+                                continue;
+                            }
+                        } else if (variantName === "Err") {
+                            if (pat.bindings.length !== 1) {
+                                this.error(`Pattern for 'Result::Err' binds ${pat.bindings.length} variable(s), but variant has 1 field`, arm.token);
+                            } else {
+                                const prevScope = this.scope;
+                                this.scope = this.scope.createChild();
+                                this.scope.define(pat.bindings[0].value, matchedType.err, false, arm.token.line, this.currentModulePath);
+                                this.visitStatement(arm.body);
+                                this.scope = prevScope;
+                                continue;
+                            }
+                        } else {
+                            this.error(`Result has no variant '${variantName}' (expected Ok or Err)`, arm.token);
+                        }
+                    } else if (matchedType.kind === "enum") {
                         const variant = matchedType.variants.find(v => v.name === pat.variantName.value);
                         if (!variant) {
                             this.error(`Enum '${matchedType.name}' has no variant '${pat.variantName.value}'`, arm.token);
@@ -619,8 +683,94 @@ export class Analyzer {
                 return UnknownType;
             }
 
+            // Result<T, E> method return types
+            if (receiverType.kind === "result") {
+                const okType = receiverType.ok;
+                const errType = receiverType.err;
+
+                if (methodName === "unwrap") {
+                    expr.arguments.forEach(a => this.visitExpression(a));
+                    return okType;
+                }
+                if (methodName === "unwrap_or") {
+                    expr.arguments.forEach(a => this.visitExpression(a));
+                    return okType;
+                }
+                if (methodName === "is_ok" || methodName === "is_err") {
+                    expr.arguments.forEach(a => this.visitExpression(a));
+                    return BoolType;
+                }
+                if (methodName === "map" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, [okType]);
+                        if (closureType.kind === "function") {
+                            return { kind: "result", ok: closureType.returnType, err: errType };
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return { kind: "result", ok: UnknownType, err: errType };
+                }
+                if (methodName === "map_err" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, [errType]);
+                        if (closureType.kind === "function") {
+                            return { kind: "result", ok: okType, err: closureType.returnType };
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return { kind: "result", ok: okType, err: UnknownType };
+                }
+                if (methodName === "and_then" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, [okType]);
+                        if (closureType.kind === "function" && closureType.returnType.kind === "result") {
+                            return closureType.returnType;
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return receiverType;
+                }
+                if (methodName === "or_else" && expr.arguments.length > 0) {
+                    const closureArg = expr.arguments[0];
+                    if (closureArg instanceof AST.ClosureExpression) {
+                        const closureType = this.visitClosureExpression(closureArg, [errType]);
+                        if (closureType.kind === "function" && closureType.returnType.kind === "result") {
+                            return closureType.returnType;
+                        }
+                    } else {
+                        this.visitExpression(closureArg);
+                    }
+                    for (let i = 1; i < expr.arguments.length; i++) this.visitExpression(expr.arguments[i]);
+                    return receiverType;
+                }
+                // Fallthrough for unknown methods
+                expr.arguments.forEach(a => this.visitExpression(a));
+                return UnknownType;
+            }
+
             // Default: visit args normally
             expr.arguments.forEach(a => this.visitExpression(a));
+            return UnknownType;
+        }
+
+        if (expr instanceof AST.QuestionExpression) {
+            const leftType = this.visitExpression(expr.left);
+            if (leftType.kind === "result") {
+                if (!this.currentFnReturnsResult) {
+                    this.error("The `?` operator can only be used in functions that return Result<T, E>", expr.token);
+                }
+                return leftType.ok;
+            }
+            // Permissive: allow ? on unknown/any types
             return UnknownType;
         }
 
@@ -817,7 +967,16 @@ export class Analyzer {
             };
         }
         
-        // Generic Instantiation: Result<T>
+        // Result<T, E> → specialized result type
+        if (t instanceof AST.TypeIdentifier && t.value === "Result" && t.typeParams.length === 2) {
+            return {
+                kind: "result",
+                ok: this.resolveType(t.typeParams[0]),
+                err: this.resolveType(t.typeParams[1]),
+            };
+        }
+
+        // Generic Instantiation: Vec<T>, HashMap<K,V>, etc.
         if (t instanceof AST.TypeIdentifier && t.typeParams.length > 0) {
             return {
                 kind: "generic_inst",
@@ -866,6 +1025,13 @@ export class Analyzer {
         if (t.kind === "struct") {
             synth.literal = t.name;
             return new AST.TypeIdentifier(synth, t.name);
+        }
+        if (t.kind === "result") {
+            synth.literal = "Result";
+            return new AST.TypeIdentifier(synth, "Result", [
+                this.typeToASTType(t.ok, refToken),
+                this.typeToASTType(t.err, refToken),
+            ]);
         }
         if (t.kind === "function") {
             const paramTypes = t.params.map(p => this.typeToASTType(p, refToken));
