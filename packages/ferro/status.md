@@ -334,6 +334,32 @@
 
 ---
 
+### 35. `break` / `continue` Loop Control
+- [x] **Token Types**: Added `Break` and `Continue` keywords to the lexer.
+- [x] **AST Nodes**: `BreakStatement` and `ContinueStatement` with token tracking.
+- [x] **Parser**: `parseBreakStatement()` and `parseContinueStatement()` with optional trailing semicolons.
+- [x] **Analyzer**: Loop depth tracking (`loopDepth`) — `break`/`continue` outside a loop produce an error. While loops are now visited for body analysis. For loops increment/decrement loop depth around body.
+- [x] **TypeScript Backend**: Direct pass-through — `break;` and `continue;`.
+- [x] **LLVM Backend**: Loop label stack (`loopLabelStack`) threaded through all loop types (while, range-for, Vec-for, HashMap-for, iterator-for, IntoIterator-for). `break` branches to the loop's end label; `continue` branches to the increment/condition label. Dead blocks emitted after branch to satisfy LLVM's basic block requirements.
+
+### 36. Inherent `impl` Blocks
+- [x] **AST**: `ImplBlock.traitName` changed to `Identifier | null` — null indicates an inherent impl.
+- [x] **Parser**: `parseImplBlock()` detects inherent vs trait impl by checking for `for` keyword after the first identifier. `impl Type { ... }` (no `for`) creates an inherent impl; `impl Trait for Type { ... }` creates a trait impl.
+- [x] **Analyzer**: Inherent impls stored in `implBlockStore` without trait registration. `findInherentMethod()` looks up methods on a type across inherent impl blocks. Static calls (`Type::method()`) and instance method calls (`val.method()`) resolve inherent methods.
+- [x] **TypeScript Backend**: Inherent impl emits a `const Type_impl = { method() { ... } }` namespace object. `Type::method(args)` → `Type_impl.method(args)`.
+- [x] **LLVM Backend**: Inherent methods use `__inherent` as a pseudo-trait name for registration and dispatch. Null-safe access to `traitName` across all impl block handling.
+
+### 37. `Option<T>` Built-in Type
+- [x] **Type System**: Added `{ kind: "option", inner: Type }` type kind with `typesEqual` and `typeToString` support.
+- [x] **Built-in Constructors**: `Some(value)` and `None` registered as built-in symbols in both the analyzer and module loader scopes. `Some(v)` infers `Option<inner>` from the argument type. `Option::Some(v)` and `Option::None` static call syntax also supported.
+- [x] **`?` Operator**: Extracts `inner` type from `Option<T>`. Validates that the enclosing function returns `Option<T>`. Tracked via `currentFnReturnsOption` flag.
+- [x] **Option Methods**: `.unwrap()` (returns T, panics on None), `.unwrap_or(default)` (returns T or default), `.is_some()` / `.is_none()` (returns bool), `.map(f)` (returns `Option<U>`), `.and_then(f)` (flat-map), `.or_else(f)` (fallback).
+- [x] **Pattern Matching**: `match opt { Option::Some(v) => ..., Option::None => ... }` with type-checked bindings. Analyzer binds `v: T` from `Option<T>`.
+- [x] **`resolveType`**: `Option<T>` in type annotations resolves to the `option` type kind.
+- [x] **TypeScript Backend**: Runtime helpers (`_option_unwrap`, `_option_unwrap_or`, `_option_is_some`, `_option_is_none`, `_option_map`, `_option_and_then`, `_option_or_else`, `_try_option`). Option match emits `switch(__match_val.some)`. `_OptionNoneError` catch for `?` operator. Option-returning functions tracked for correct `?`/method dispatch.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -344,9 +370,9 @@
 
 ### Tier 1 — High Impact (Next Up)
 - ~~**Floating-Point Type (`f64`)**~~: **Completed (see §3 Syntax Features)**
-- **`break` / `continue`**: Loop control keywords. Lexer keywords, AST nodes, analyzer validation (must be inside loop), LLVM branch to loop exit/header, TS pass-through.
-- **Inherent `impl` Blocks**: `impl Point { fn new() -> Point { ... } }` without requiring a trait. Enables idiomatic struct methods and constructors.
-- **`Option<T>` Built-in**: Prelude enum `Option<T> { Some(T), None }` with `?` operator integration and compiler awareness.
+- ~~**`break` / `continue`**~~: **Completed (see §35)**
+- ~~**Inherent `impl` Blocks**~~: **Completed (see §36)**
+- ~~**`Option<T>` Built-in**~~: **Completed (see §37)**
 
 ### Tier 2 — Expressiveness
 - **Tuple Types**: `(int, string)` with positional access (`.0`, `.1`), destructuring, struct-based LLVM representation.

@@ -7,6 +7,9 @@ export class Emitter {
     private structVars: Set<string> = new Set();
     private hasIntoIterator: boolean = false;
     private resultVars: Set<string> = new Set();
+    private inherentImplTypes: Set<string> = new Set();
+    private optionVars: Set<string> = new Set();
+    private optionFunctions: Set<string> = new Set();
 
     public emit(node: AST.Node): string {
         if (node instanceof AST.Program) {
@@ -41,6 +44,12 @@ export class Emitter {
         }
         if (node instanceof AST.ForStatement) {
             return this.emitForStatement(node);
+        }
+        if (node instanceof AST.BreakStatement) {
+            return "break;";
+        }
+        if (node instanceof AST.ContinueStatement) {
+            return "continue;";
         }
         if (node instanceof AST.ExpressionStatement) {
             return this.emitExpressionStatement(node);
@@ -93,6 +102,16 @@ export class Emitter {
         if (node instanceof AST.MethodCallExpression) {
             const obj = this.emit(node.object);
             const method = node.method.value;
+            // Option<T> methods — dispatch based on tracking
+            if (this.isOptionExpr(node.object)) {
+                if (method === "unwrap" && node.arguments.length === 0) return `_option_unwrap(${obj})`;
+                if (method === "unwrap_or" && node.arguments.length === 1) return `_option_unwrap_or(${obj}, ${this.emit(node.arguments[0])})`;
+                if (method === "is_some" && node.arguments.length === 0) return `_option_is_some(${obj})`;
+                if (method === "is_none" && node.arguments.length === 0) return `_option_is_none(${obj})`;
+                if (method === "map" && node.arguments.length >= 1) return `_option_map(${obj}, ${this.emit(node.arguments[0])})`;
+                if (method === "and_then" && node.arguments.length >= 1) return `_option_and_then(${obj}, ${this.emit(node.arguments[0])})`;
+                if (method === "or_else" && node.arguments.length >= 1) return `_option_or_else(${obj}, ${this.emit(node.arguments[0])})`;
+            }
             // Result<T, E> methods — dispatch to runtime helpers
             if (method === "unwrap" && node.arguments.length === 0) return `_result_unwrap(${obj})`;
             if (method === "unwrap_or" && node.arguments.length === 1) return `_result_unwrap_or(${obj}, ${this.emit(node.arguments[0])})`;
@@ -122,6 +141,15 @@ export class Emitter {
                 if (method === "keys" || method === "keys_iter") return `[...${obj}.keys()]`;
                 if (method === "values" || method === "values_iter") return `[...${obj}.values()]`;
             }
+            // Check if receiver is a struct variable with inherent impl methods
+            if (node.object instanceof AST.Identifier && this.structVars.has(node.object.value)) {
+                for (const typeName of this.inherentImplTypes) {
+                    // Dispatch to inherent impl: Type_impl.method(self, args)
+                    const args = node.arguments.map(a => this.emit(a)).join(", ");
+                    const selfArg = args ? `${obj}, ${args}` : obj;
+                    return `${typeName}_impl.${method}(${selfArg})`;
+                }
+            }
             const args = node.arguments.map(a => this.emit(a)).join(", ");
             return `${obj}.${method}(${args})`;
         }
@@ -132,6 +160,9 @@ export class Emitter {
             return this.emitStructLiteral(node);
         }
         if (node instanceof AST.QuestionExpression) {
+            if (this.isOptionExpr(node.left)) {
+                return `_try_option(${this.emit(node.left)})`;
+            }
             return `_try(${this.emit(node.left)})`;
         }
         if (node instanceof AST.CastExpression) {
@@ -196,6 +227,35 @@ function _getType(obj: any) {
   if (type === "object") return obj.constructor.name;
   return type; // "string", "number", etc
 }
+function Some(value: any) { return { some: true, value }; }
+const None = { some: false } as any;
+function _option_unwrap(opt: any) {
+  if (opt && opt.some === true) return opt.value;
+  throw new Error("called unwrap() on a None value");
+}
+function _option_unwrap_or(opt: any, def: any) {
+  if (opt && opt.some === true) return opt.value;
+  return def;
+}
+function _option_is_some(opt: any) { return !!(opt && opt.some === true); }
+function _option_is_none(opt: any) { return !(opt && opt.some === true); }
+function _option_map(opt: any, f: any) {
+  if (opt && opt.some === true) return Some(f(opt.value));
+  return None;
+}
+function _option_and_then(opt: any, f: any) {
+  if (opt && opt.some === true) return f(opt.value);
+  return None;
+}
+function _option_or_else(opt: any, f: any) {
+  if (opt && opt.some === true) return opt;
+  return f();
+}
+class _OptionNoneError extends Error {}
+function _try_option(opt: any) {
+  if (opt && opt.some === true) return opt.value;
+  throw new _OptionNoneError();
+}
 `;
         return runtime + program.statements.map((stmt) => this.emit(stmt)).join("\n");
     }
@@ -234,6 +294,13 @@ function _getType(obj: any) {
         if (stmt.type && stmt.type instanceof AST.TypeIdentifier && stmt.type.value === "Result") {
             this.resultVars.add(stmt.name.value);
         }
+        // Track Option variables
+        if (stmt.value && this.isOptionExpr(stmt.value)) {
+            this.optionVars.add(stmt.name.value);
+        }
+        if (stmt.type && stmt.type instanceof AST.TypeIdentifier && stmt.type.value === "Option") {
+            this.optionVars.add(stmt.name.value);
+        }
         return `${keyword} ${stmt.name.value}${typeAnn} = ${value};`;
     }
 
@@ -260,12 +327,28 @@ function _getType(obj: any) {
     }
 
     private emitImplBlock(impl: AST.ImplBlock): string {
-        const traitName = impl.traitName.value;
         const targetType = this.mapJSTypeName(impl.targetType.value);
         const typeParamsStr = impl.typeParams.length > 0
             ? `<${impl.typeParams.join(", ")}>`
             : "";
 
+        // Inherent impl: emit as a namespace object with static methods
+        if (!impl.traitName) {
+            const typeName = impl.targetType.value;
+            // Track this so static calls can use it
+            if (!this.inherentImplTypes) this.inherentImplTypes = new Set();
+            this.inherentImplTypes.add(typeName);
+
+            const methods = impl.methods.map(m => {
+                const params = m.parameters.map(p => `${p.name.value}: any`).join(", ");
+                const body = this.emitBlockStatement(m.body, true);
+                return `  ${m.name}${typeParamsStr}(${params}) ${body}`;
+            }).join(",\n");
+
+            return `const ${typeName}_impl = {\n${methods}\n};`;
+        }
+
+        const traitName = impl.traitName.value;
         const methods = impl.methods.map(m => {
             const params = m.parameters.map(p => `${p.name.value}: any`).join(", ");
             const body = this.emitBlockStatement(m.body, true);
@@ -429,6 +512,11 @@ function _getType(obj: any) {
     }
 
     private emitFunctionLiteral(fn: AST.FunctionLiteral): string {
+        // Track if this function returns Option<T>
+        if (fn.returnType instanceof AST.TypeIdentifier && fn.returnType.value === "Option") {
+            this.optionFunctions.add(fn.name);
+        }
+
         const typeParams = fn.typeParams.length > 0
             ? `<${fn.typeParams.join(", ")}>`
             : "";
@@ -450,6 +538,7 @@ function _getType(obj: any) {
 ${bodyStmts}
 } catch (e) {
   if (e instanceof _ResultError) return { ok: false, error: e.error };
+  if (e instanceof _OptionNoneError) return None;
   throw e;
 }`;
         }
@@ -485,6 +574,24 @@ ${bodyStmts}
                 return `Math.min(Math.max(${x}, ${lo}), ${hi})`;
             }
             return `Math.${methodName}(${args})`;
+        }
+
+        // Option::Some(v) → Some(v), Option::None → None
+        if (receiverName === "Option") {
+            const methodName = expr.method.value;
+            if (methodName === "Some" && expr.arguments.length === 1) {
+                return `Some(${this.emit(expr.arguments[0])})`;
+            }
+            if (methodName === "None") {
+                return `None`;
+            }
+        }
+
+        // Inherent impl static calls: Type::method(args) → Type_impl.method(args)
+        if (this.inherentImplTypes.has(receiverName)) {
+            const methodName = expr.method.value;
+            const args = expr.arguments.map(a => this.emit(a)).join(", ");
+            return `${receiverName}_impl.${methodName}(${args})`;
         }
 
         // Enum variant construction
@@ -548,6 +655,15 @@ ${arms}
     }
 
     private emitEnumMatch(value: string, expr: AST.MatchExpression): string {
+        // Check if this is an Option match (Option::Some / Option::None patterns)
+        const isOptionMatch = expr.arms.some(arm =>
+            arm.pattern instanceof AST.EnumPattern && arm.pattern.enumName.value === "Option"
+        );
+
+        if (isOptionMatch) {
+            return this.emitOptionMatch(value, expr);
+        }
+
         // Check if this is a Result match (Result::Ok / Result::Err patterns)
         const isResultMatch = expr.arms.some(arm =>
             arm.pattern instanceof AST.EnumPattern && arm.pattern.enumName.value === "Result"
@@ -585,6 +701,41 @@ ${arms}
         }).join("\n");
 
         return `(() => { const __match_val = ${value}; switch(__match_val.tag) {
+${arms}
+} })()`;
+    }
+
+    private emitOptionMatch(value: string, expr: AST.MatchExpression): string {
+        const arms = expr.arms.map(arm => {
+            if (arm.pattern instanceof AST.EnumPattern) {
+                const variantName = arm.pattern.variantName.value;
+                let binding = "";
+                if (variantName === "Some" && arm.pattern.bindings.length > 0) {
+                    binding = `const ${arm.pattern.bindings[0].value} = __match_val.value;`;
+                }
+
+                let body = "";
+                if (arm.body instanceof AST.BlockStatement) {
+                    body = this.emitBlockStatement(arm.body, true);
+                } else if (arm.body instanceof AST.ExpressionStatement && arm.body.expression) {
+                    body = `return ${this.emit(arm.body.expression)};`;
+                }
+
+                const caseVal = variantName === "Some" ? "true" : "false";
+                return `case ${caseVal}: { ${binding}\n${body} }`;
+            } else if (arm.pattern instanceof AST.WildcardPattern) {
+                let body = "";
+                if (arm.body instanceof AST.BlockStatement) {
+                    body = this.emitBlockStatement(arm.body, true);
+                } else if (arm.body instanceof AST.ExpressionStatement && arm.body.expression) {
+                    body = `return ${this.emit(arm.body.expression)};`;
+                }
+                return `default: { ${body} }`;
+            }
+            return "";
+        }).join("\n");
+
+        return `(() => { const __match_val = ${value}; switch(__match_val.some) {
 ${arms}
 } })()`;
     }
@@ -671,6 +822,22 @@ ${arms}
         }).join("\n");
 
         return `(${params})${retType} => {\n${bodyStmts}\n}`;
+    }
+
+    private isOptionExpr(node: AST.Expression): boolean {
+        if (node instanceof AST.Identifier && this.optionVars.has(node.value)) return true;
+        if (node instanceof AST.Identifier && node.value === "None") return true;
+        if (node instanceof AST.CallExpression && node.function instanceof AST.Identifier) {
+            if (node.function.value === "Some") return true;
+            if (this.optionFunctions.has(node.function.value)) return true;
+        }
+        if (node instanceof AST.StaticCallExpression && node.receiver.value === "Option") return true;
+        if (node instanceof AST.MethodCallExpression) {
+            const m = node.method.value;
+            if (["map", "and_then", "or_else"].includes(m)) return this.isOptionExpr(node.object);
+        }
+        // QuestionExpression on an Option produces the inner value, not an Option
+        return false;
     }
 
     private isResultMethodContext(node: AST.MethodCallExpression): boolean {

@@ -1,0 +1,50 @@
+// Test break and continue in loops
+
+// break in while loop — find first number > 5
+fn find_first_gt5() -> int {
+    let mut i = 0;
+    let mut result = 0;
+    while (i < 10) {
+        i = i + 1;
+        if (i > 5) {
+            result = i;
+            break;
+        }
+    }
+    result
+}
+
+// continue in for loop — sum only numbers > 3
+fn sum_gt3() -> int {
+    let mut total = 0;
+    for (x in 0..10) {
+        if (x <= 3) {
+            continue;
+        }
+        total = total + x;
+    }
+    total
+}
+
+// nested loops with break
+fn nested_break() -> int {
+    let mut count = 0;
+    for (i in 0..5) {
+        for (j in 0..5) {
+            if (j == 3) {
+                break;
+            }
+            count = count + 1;
+        }
+    }
+    count
+}
+
+let a = find_first_gt5();
+print(a);
+
+let b = sum_gt3();
+print(b);
+
+let c = nested_break();
+print(c);

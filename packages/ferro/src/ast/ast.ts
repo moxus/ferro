@@ -328,6 +328,30 @@ export class RangeExpression implements Expression {
   toString(): string { return `${this.start.toString()}..${this.end.toString()}`; }
 }
 
+export class BreakStatement implements Statement {
+  token: Token;
+
+  constructor(token: Token) {
+    this.token = token;
+  }
+
+  statementNode() { }
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string { return "break;"; }
+}
+
+export class ContinueStatement implements Statement {
+  token: Token;
+
+  constructor(token: Token) {
+    this.token = token;
+  }
+
+  statementNode() { }
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string { return "continue;"; }
+}
+
 export class ForStatement implements Statement {
   token: Token; // for
   variable: Identifier;
@@ -859,14 +883,14 @@ export class QuestionExpression implements Expression {
 
 export class ImplBlock implements Statement {
   token: Token; // impl
-  traitName: Identifier;
+  traitName: Identifier | null; // null for inherent impl blocks (impl Type { ... })
   targetType: Identifier;
   typeParams: string[] = [];
   typeConstraints: Map<string, string[]> = new Map(); // T: Trait1 + Trait2
   targetTypeArgs: string[] = [];  // e.g. impl<T> Trait for Box<T> → targetTypeArgs = ["T"]
   methods: FunctionLiteral[] = [];
 
-  constructor(token: Token, traitName: Identifier, targetType: Identifier) {
+  constructor(token: Token, traitName: Identifier | null, targetType: Identifier) {
     this.token = token;
     this.traitName = traitName;
     this.targetType = targetType;
@@ -877,7 +901,10 @@ export class ImplBlock implements Statement {
   toString(): string {
     const tp = this.typeParams.length > 0 ? `<${this.typeParams.join(", ")}>` : "";
     const ta = this.targetTypeArgs.length > 0 ? `<${this.targetTypeArgs.join(", ")}>` : "";
-    return `impl${tp} ${this.traitName.toString()} for ${this.targetType.toString()}${ta} { ... }`;
+    if (this.traitName) {
+      return `impl${tp} ${this.traitName.toString()} for ${this.targetType.toString()}${ta} { ... }`;
+    }
+    return `impl${tp} ${this.targetType.toString()}${ta} { ... }`;
   }
 }
 
