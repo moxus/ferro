@@ -6,6 +6,7 @@ export class Emitter {
     private hashMapVars: Set<string> = new Set();
     private structVars: Set<string> = new Set();
     private hasIntoIterator: boolean = false;
+    private resultVars: Set<string> = new Set();
 
     public emit(node: AST.Node): string {
         if (node instanceof AST.Program) {
@@ -92,6 +93,17 @@ export class Emitter {
         if (node instanceof AST.MethodCallExpression) {
             const obj = this.emit(node.object);
             const method = node.method.value;
+            // Result<T, E> methods — dispatch to runtime helpers
+            if (method === "unwrap" && node.arguments.length === 0) return `_result_unwrap(${obj})`;
+            if (method === "unwrap_or" && node.arguments.length === 1) return `_result_unwrap_or(${obj}, ${this.emit(node.arguments[0])})`;
+            if (method === "is_ok" && node.arguments.length === 0) return `_result_is_ok(${obj})`;
+            if (method === "is_err" && node.arguments.length === 0) return `_result_is_err(${obj})`;
+            if (method === "map" && this.isResultMethodContext(node)) {
+                return `_result_map(${obj}, ${this.emit(node.arguments[0])})`;
+            }
+            if (method === "map_err" && node.arguments.length >= 1) return `_result_map_err(${obj}, ${this.emit(node.arguments[0])})`;
+            if (method === "and_then" && node.arguments.length >= 1) return `_result_and_then(${obj}, ${this.emit(node.arguments[0])})`;
+            if (method === "or_else" && node.arguments.length >= 1) return `_result_or_else(${obj}, ${this.emit(node.arguments[0])})`;
             // collect() is identity for TS arrays (map/filter already return arrays eagerly)
             if (method === "collect") return obj;
             // iter() is identity for TS arrays (JS arrays are already iterable)
@@ -152,6 +164,32 @@ function _try(res: any) {
 }
 function Ok(value: any) { return { ok: true, value }; }
 function Err(error: any) { return { ok: false, error }; }
+function _result_unwrap(res: any) {
+  if (res && res.ok === true) return res.value;
+  throw new Error("called unwrap() on an Err value: " + JSON.stringify(res.error));
+}
+function _result_unwrap_or(res: any, def: any) {
+  if (res && res.ok === true) return res.value;
+  return def;
+}
+function _result_is_ok(res: any) { return !!(res && res.ok === true); }
+function _result_is_err(res: any) { return !!(res && res.ok === false); }
+function _result_map(res: any, f: any) {
+  if (res && res.ok === true) return Ok(f(res.value));
+  return res;
+}
+function _result_map_err(res: any, f: any) {
+  if (res && res.ok === false) return Err(f(res.error));
+  return res;
+}
+function _result_and_then(res: any, f: any) {
+  if (res && res.ok === true) return f(res.value);
+  return res;
+}
+function _result_or_else(res: any, f: any) {
+  if (res && res.ok === false) return f(res.error);
+  return res;
+}
 function _getType(obj: any) {
   if (obj === null || obj === undefined) return "null";
   const type = typeof obj;
@@ -176,6 +214,25 @@ function _getType(obj: any) {
         // Track struct variables for IntoIterator dispatch
         if (stmt.value instanceof AST.StructLiteral) {
             this.structVars.add(stmt.name.value);
+        }
+        // Track Result variables for method dispatch
+        if (stmt.value instanceof AST.CallExpression && stmt.value.function instanceof AST.Identifier) {
+            const fnName = stmt.value.function.value;
+            if (fnName === "Ok" || fnName === "Err") {
+                this.resultVars.add(stmt.name.value);
+            }
+        }
+        // Also track when assigned from a function that returns Result (via ? usage, method calls on Results, etc.)
+        if (stmt.value instanceof AST.MethodCallExpression) {
+            const m = stmt.value.method.value;
+            if (["map", "map_err", "and_then", "or_else"].includes(m) &&
+                stmt.value.object instanceof AST.Identifier && this.resultVars.has(stmt.value.object.value)) {
+                this.resultVars.add(stmt.name.value);
+            }
+        }
+        // Track type annotation with Result
+        if (stmt.type && stmt.type instanceof AST.TypeIdentifier && stmt.type.value === "Result") {
+            this.resultVars.add(stmt.name.value);
         }
         return `${keyword} ${stmt.name.value}${typeAnn} = ${value};`;
     }
@@ -491,6 +548,15 @@ ${arms}
     }
 
     private emitEnumMatch(value: string, expr: AST.MatchExpression): string {
+        // Check if this is a Result match (Result::Ok / Result::Err patterns)
+        const isResultMatch = expr.arms.some(arm =>
+            arm.pattern instanceof AST.EnumPattern && arm.pattern.enumName.value === "Result"
+        );
+
+        if (isResultMatch) {
+            return this.emitResultMatch(value, expr);
+        }
+
         const arms = expr.arms.map(arm => {
             if (arm.pattern instanceof AST.EnumPattern) {
                 const variantName = arm.pattern.variantName.value;
@@ -519,6 +585,43 @@ ${arms}
         }).join("\n");
 
         return `(() => { const __match_val = ${value}; switch(__match_val.tag) {
+${arms}
+} })()`;
+    }
+
+    private emitResultMatch(value: string, expr: AST.MatchExpression): string {
+        const arms = expr.arms.map(arm => {
+            if (arm.pattern instanceof AST.EnumPattern) {
+                const variantName = arm.pattern.variantName.value;
+                let binding = "";
+                if (variantName === "Ok" && arm.pattern.bindings.length > 0) {
+                    binding = `const ${arm.pattern.bindings[0].value} = __match_val.value;`;
+                } else if (variantName === "Err" && arm.pattern.bindings.length > 0) {
+                    binding = `const ${arm.pattern.bindings[0].value} = __match_val.error;`;
+                }
+
+                let body = "";
+                if (arm.body instanceof AST.BlockStatement) {
+                    body = this.emitBlockStatement(arm.body, true);
+                } else if (arm.body instanceof AST.ExpressionStatement && arm.body.expression) {
+                    body = `return ${this.emit(arm.body.expression)};`;
+                }
+
+                const caseVal = variantName === "Ok" ? "true" : "false";
+                return `case ${caseVal}: { ${binding}\n${body} }`;
+            } else if (arm.pattern instanceof AST.WildcardPattern) {
+                let body = "";
+                if (arm.body instanceof AST.BlockStatement) {
+                    body = this.emitBlockStatement(arm.body, true);
+                } else if (arm.body instanceof AST.ExpressionStatement && arm.body.expression) {
+                    body = `return ${this.emit(arm.body.expression)};`;
+                }
+                return `default: { ${body} }`;
+            }
+            return "";
+        }).join("\n");
+
+        return `(() => { const __match_val = ${value}; switch(__match_val.ok) {
 ${arms}
 } })()`;
     }
@@ -568,6 +671,24 @@ ${arms}
         }).join("\n");
 
         return `(${params})${retType} => {\n${bodyStmts}\n}`;
+    }
+
+    private isResultMethodContext(node: AST.MethodCallExpression): boolean {
+        // Check if the receiver is a known Result variable
+        if (node.object instanceof AST.Identifier && this.resultVars.has(node.object.value)) return true;
+        // Check if the receiver is a direct Ok() or Err() call
+        if (node.object instanceof AST.CallExpression && node.object.function instanceof AST.Identifier) {
+            const fn = node.object.function.value;
+            if (fn === "Ok" || fn === "Err") return true;
+        }
+        // Check if receiver is chained Result method
+        if (node.object instanceof AST.MethodCallExpression) {
+            const m = node.object.method.value;
+            if (["map", "map_err", "and_then", "or_else"].includes(m)) {
+                return this.isResultMethodContext(node.object);
+            }
+        }
+        return false;
     }
 
     private hasQuestionMark(node: AST.Node): boolean {

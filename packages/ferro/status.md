@@ -322,6 +322,18 @@
 
 ---
 
+### 34. Higher-Level Error Handling (`Result<T, E>`)
+- [x] **Built-in `Result<T, E>` Type**: `Result<T, E>` is resolved as a first-class `result` kind in the type system, separate from generic enums. `typesEqual` and `typeToString` fully support it.
+- [x] **`Ok(value)` / `Err(error)` Constructors**: Registered as built-in functions in the analyzer. Type inference from enclosing function return type — `Ok(42)` inside `fn foo() -> Result<int, string>` infers `Result<int, string>`.
+- [x] **`?` Operator Type Checking**: The `?` operator is validated by the analyzer — it extracts the `Ok` type from `Result<T, E>` and reports an error if used outside a function returning `Result`.
+- [x] **Result Methods**: `.unwrap()` (returns T, panics on Err), `.unwrap_or(default)` (returns T or default), `.is_ok()` / `.is_err()` (returns bool), `.map(f)` (transforms Ok value, returns `Result<U, E>`), `.map_err(f)` (transforms Err value, returns `Result<T, F>`), `.and_then(f)` (flat-maps Ok, returns new Result), `.or_else(f)` (flat-maps Err, returns new Result).
+- [x] **Result Pattern Matching**: `match result { Result::Ok(v) => ..., Result::Err(e) => ... }` with type-checked bindings. Analyzer binds `v: T` and `e: E` from `Result<T, E>`.
+- [x] **TypeScript Backend**: Runtime helpers (`_result_unwrap`, `_result_unwrap_or`, `_result_is_ok`, `_result_is_err`, `_result_map`, `_result_map_err`, `_result_and_then`, `_result_or_else`). Result match emits `switch(__match_val.ok)` with `__match_val.value` / `__match_val.error` bindings.
+- [x] **Type Comparison**: `typesEqual` compares `Result<T, E>` structurally (ok and err types must match). `Function` type comparison also implemented.
+- [x] **Test Coverage**: 18 new tests in `result.test.ts` covering Ok/Err constructors, `?` operator validation, all 8 Result methods, pattern matching, type annotations, and TS code generation.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -343,13 +355,13 @@
 - **`const` Declarations**: Compile-time constants (`const PI: f64 = 3.14159`).
 
 ### Tier 3 — Ecosystem & Polish
-- **Full `Result<T, E>` Support**: `Ok(v)` / `Err(e)` constructors, `?` propagation in both backends.
+- ~~**Full `Result<T, E>` Support**~~: **Completed (see §34 Higher-Level Error Handling)**
 - **Type Aliases**: `type Name = SomeType`.
 - **Array Types**: Fixed-size `[int; 5]` for stack-allocated arrays.
 - **Async/Await**: Important for JS ecosystem interop (large undertaking).
 
 ### Existing Planned Items
-- **Standard Library**: ~~File I/O~~, ~~Math~~ — completed. Remaining: higher-level abstractions, error handling.
+- **Standard Library**: ~~File I/O~~, ~~Math~~, ~~Error Handling~~ — completed. Remaining: higher-level abstractions.
 - **Cycle Detection** (Low Priority): Optional weak references or cycle-collector.
 - **FFI Enhancements**: More robust platform-specific ABI handling.
 
