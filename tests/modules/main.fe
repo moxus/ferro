@@ -1,0 +1,5 @@
+
+            import { add } from "./math"
+            let res = add(10, 20);
+            export let final = res;
+        
