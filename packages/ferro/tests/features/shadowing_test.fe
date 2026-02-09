@@ -1,0 +1,60 @@
+// Test: Variable shadowing within the same function scope
+// Regression test for LLVM emitter duplicate %var.addr bug
+
+// Test 1: Same variable name in if branch (early return) + outer scope
+fn shadow_in_branches(n: int) -> int {
+    if (n == 0) {
+        let x: int = 100;
+        return x;
+    };
+    let x: int = 200;
+    return x;
+}
+
+print(shadow_in_branches(0));
+print(shadow_in_branches(1));
+
+// Test 2: Same variable name used in both if/else branches (both return)
+fn shadow_both_branches(flag: bool) -> string {
+    if (flag) {
+        let s: string = "hello";
+        return s;
+    } else {
+        let s: string = "world";
+        return s;
+    }
+}
+
+print(shadow_both_branches(true));
+print(shadow_both_branches(false));
+
+// Test 3: Multiple variables with same name across sequential scopes
+fn multi_shadow(x: int) -> int {
+    if (x < 0) {
+        let r: int = 0 - x;
+        return r;
+    };
+    if (x == 0) {
+        let r: int = 1;
+        return r;
+    };
+    let r: int = x * 2;
+    return r;
+}
+
+print(multi_shadow(0 - 5));
+print(multi_shadow(0));
+print(multi_shadow(7));
+
+// Test 4: Loop variable name doesn't collide with outer
+fn loop_sum() -> int {
+    let mut total: int = 0;
+    for (i in 0..5) {
+        total = total + i;
+    }
+    return total;
+}
+
+print(loop_sum());
+
+print("All shadowing tests passed");

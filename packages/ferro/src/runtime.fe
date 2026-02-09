@@ -964,6 +964,93 @@ export fn fs_file_tell(file: *fs_File) -> i64 {
     return result;
 }
 
+// Read an entire file into a string
+// Returns empty string on error
+export fn fs_file_read_to_string(filename: *fs_String) -> fs_String {
+    let mut result: fs_String = fs_string_alloc(0);
+    unsafe {
+        // Convert filename to null-terminated C string
+        let mut fname: *i8 = null;
+        if ((*filename).ptr != null) {
+            fname = malloc((*filename).len + 1);
+            if (fname != null) {
+                memcpy(fname, (*filename).ptr, (*filename).len);
+                *(fname + (*filename).len) = 0 as i8;
+            };
+        };
+
+        if (fname != null) {
+            // Build "r" mode string
+            let mode_buf: *i8 = malloc(2);
+            if (mode_buf != null) {
+                *mode_buf = 114 as i8;
+                *(mode_buf + 1) = 0 as i8;
+
+                let handle: *i8 = fopen(fname, mode_buf);
+                free(mode_buf);
+
+                if (handle != null) {
+                    // Seek to end to get file size
+                    fseek(handle, 0 as i64, 2);
+                    let size: i64 = ftell(handle);
+                    fseek(handle, 0 as i64, 0);
+
+                    let file_size: i32 = size as i32;
+                    if (file_size > 0) {
+                        result = fs_string_alloc(file_size);
+                        if (result.ptr != null) {
+                            let bytes_read: i32 = fread(result.ptr, 1, file_size, handle);
+                            result.len = bytes_read;
+                            *(result.ptr + bytes_read) = 0 as i8;
+                        };
+                    };
+                    fclose(handle);
+                };
+            };
+            free(fname);
+        };
+    }
+    return result;
+}
+
+// Write a string to a file (creates or overwrites)
+// Returns number of bytes written, 0 on error
+export fn fs_file_write_to_string(filename: *fs_String, contents: *fs_String) -> i32 {
+    let mut written: i32 = 0;
+    unsafe {
+        // Convert filename to null-terminated C string
+        let mut fname: *i8 = null;
+        if ((*filename).ptr != null) {
+            fname = malloc((*filename).len + 1);
+            if (fname != null) {
+                memcpy(fname, (*filename).ptr, (*filename).len);
+                *(fname + (*filename).len) = 0 as i8;
+            };
+        };
+
+        if (fname != null) {
+            // Build "w" mode string
+            let mode_buf: *i8 = malloc(2);
+            if (mode_buf != null) {
+                *mode_buf = 119 as i8;
+                *(mode_buf + 1) = 0 as i8;
+
+                let handle: *i8 = fopen(fname, mode_buf);
+                free(mode_buf);
+
+                if (handle != null) {
+                    if ((*contents).ptr != null && (*contents).len > 0) {
+                        written = fwrite((*contents).ptr, 1, (*contents).len, handle);
+                    };
+                    fclose(handle);
+                };
+            };
+            free(fname);
+        };
+    }
+    return written;
+}
+
 // ---- Math Utilities ----
 
 // Absolute value

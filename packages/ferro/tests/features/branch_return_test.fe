@@ -1,0 +1,84 @@
+// Test: Functions where all branches return (unreachable code after if/else)
+// Regression test for LLVM emitter generating invalid ret for struct types
+
+// Test 1: bool -> string with returns in both branches
+fn bool_label(b: bool) -> string {
+    if (b) {
+        return "yes";
+    } else {
+        return "no";
+    }
+}
+
+print(bool_label(true));
+print(bool_label(false));
+
+// Test 2: int -> string with early return + fallthrough
+fn classify(n: int) -> string {
+    if (n < 0) {
+        return "negative";
+    };
+    if (n == 0) {
+        return "zero";
+    };
+    return "positive";
+}
+
+print(classify(0 - 5));
+print(classify(0));
+print(classify(42));
+
+// Test 3: Return int from all if/else branches
+fn abs_val(x: int) -> int {
+    if (x < 0) {
+        return 0 - x;
+    } else {
+        return x;
+    }
+}
+
+print(abs_val(0 - 7));
+print(abs_val(3));
+
+// Test 4: Multiple early returns with string values
+fn grade(score: int) -> string {
+    if (score >= 90) {
+        return "A";
+    };
+    if (score >= 80) {
+        return "B";
+    };
+    if (score >= 70) {
+        return "C";
+    };
+    return "F";
+}
+
+print(grade(95));
+print(grade(85));
+print(grade(75));
+print(grade(50));
+
+// Test 5: Nested if/else with returns in all leaves
+fn nested_returns(x: int, y: int) -> int {
+    if (x > 0) {
+        if (y > 0) {
+            return x + y;
+        } else {
+            return x;
+        }
+    } else {
+        if (y > 0) {
+            return y;
+        } else {
+            return 0;
+        }
+    }
+}
+
+print(nested_returns(3, 4));
+print(nested_returns(5, 0 - 1));
+print(nested_returns(0 - 1, 7));
+print(nested_returns(0 - 1, 0 - 1));
+
+print("All branch return tests passed");

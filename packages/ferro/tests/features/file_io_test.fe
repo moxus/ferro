@@ -1,0 +1,26 @@
+// Test: High-level File I/O API
+
+// Test 1: Write a file using convenience static
+File::write_to_string("_test_output.txt", "Hello Ferro!");
+print("Wrote file");
+
+// Test 2: Read entire file using convenience static
+let read_back = File::read_to_string("_test_output.txt");
+print(read_back);
+
+// Test 3: Open file, read line, close
+let mut f = File::open("_test_output.txt", "r");
+let line1 = f.read_line();
+print(line1);
+f.close();
+
+// Test 4: Write via File::open + method call
+let mut f2 = File::open("_test_output2.txt", "w");
+f2.write_string("Written via method");
+f2.close();
+
+// Test 5: Read back the method-written file
+let content2 = File::read_to_string("_test_output2.txt");
+print(content2);
+
+print("All file I/O tests passed");

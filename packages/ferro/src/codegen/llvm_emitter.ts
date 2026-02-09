@@ -14,6 +14,7 @@ export class LLVMEmitter {
     private labelCounter: number = 0;
     private closureCounter: number = 0;
     private locals: Map<string, string> = new Map();
+    private localNameCounts: Map<string, number> = new Map();
     private localTypes: Map<string, string> = new Map();
     // Locals stored as raw pointers (struct literals, enum variants) — no load needed
     private localIsPtr: Set<string> = new Set();
@@ -70,6 +71,8 @@ export class LLVMEmitter {
     private runtimeExports: Map<string, string> = new Map();
     // The LLVM type name for the runtime's String struct (e.g., "%struct.m2_fs_String")
     private runtimeStringType: string = "";
+    // The LLVM type name for the runtime's File struct (e.g., "%struct.m2_fs_File")
+    private runtimeFileType: string = "";
 
     // Vec/HashMap element type tracking: variable name → LLVM element type
     // Used to know what bitcasts to insert for type-erased runtime calls
@@ -133,6 +136,18 @@ export class LLVMEmitter {
 
     private isHashMapType(t: string): boolean {
         return t.includes("fs_HashMap");
+    }
+
+    private isFileType(t: string): boolean {
+        return t === "%File" || (this.runtimeFileType !== "" && t === this.runtimeFileType);
+    }
+
+    private getFileStructType(): string {
+        if (this.runtimeFileType) return this.runtimeFileType;
+        for (const [name] of this.structs) {
+            if (name.endsWith("fs_File")) return `%struct.${name}`;
+        }
+        return "%File";
     }
 
     // Returns true if the given LLVM type is reference-counted (needs retain/release)
@@ -219,6 +234,7 @@ export class LLVMEmitter {
         this.labelCounter = 0;
         this.closureCounter = 0;
         this.locals.clear();
+        this.localNameCounts.clear();
         this.localTypes.clear();
         this.structs.clear();
         this.structFieldTypes.clear();
@@ -243,6 +259,7 @@ export class LLVMEmitter {
         this.definedFunctions.clear();
         this.runtimeExports.clear();
         this.runtimeStringType = "";
+        this.runtimeFileType = "";
         this.rcScopeStack = [];
         this.droppedVars.clear();
         this.insideRuntimeFn = false;
@@ -268,6 +285,7 @@ export class LLVMEmitter {
             "fs_hashmap_iter_next",
             "fs_file_open", "fs_file_close", "fs_file_read", "fs_file_write",
             "fs_file_read_line", "fs_file_write_string", "fs_file_seek", "fs_file_tell",
+            "fs_file_read_to_string", "fs_file_write_to_string",
             "fs_math_abs", "fs_math_min", "fs_math_max", "fs_math_pow", "fs_math_sqrt", "fs_math_clamp",
             "fs_math_abs_f", "fs_math_min_f", "fs_math_max_f", "fs_math_sqrt_f", "fs_math_clamp_f",
             "fs_int_to_string", "fs_float_to_string", "fs_bool_to_string"
@@ -436,7 +454,7 @@ export class LLVMEmitter {
         if (typeName === "string") return this.runtimeStringType || "%String";
         if (typeName === "void") return "void";
         if (typeName === "i8") return "i8";
-        if (typeName === "File") return "%File";
+        if (typeName === "File") return this.getFileStructType();
         // Vec<T> and HashMap<K,V> map to their runtime struct types
         if (typeName === "Vec") return this.getVecStructType();
         if (typeName === "HashMap") return this.getHashMapStructType();
@@ -562,6 +580,7 @@ export class LLVMEmitter {
         const oldLocals = new Map(this.locals);
         const oldLocalTypes = new Map(this.localTypes);
         const oldLocalIsPtr = new Set(this.localIsPtr);
+        const oldLocalNameCounts = new Map(this.localNameCounts);
         const oldReg = this.registerCounter;
         const oldRcScopeStack = this.rcScopeStack;
         const oldDroppedVars = new Set(this.droppedVars);
@@ -571,6 +590,7 @@ export class LLVMEmitter {
         const oldScope = this.currentScope;
 
         this.locals.clear();
+        this.localNameCounts.clear();
         this.localIsPtr.clear();
         this.registerCounter = 0;
         this.rcScopeStack = [];
@@ -625,22 +645,32 @@ export class LLVMEmitter {
         let hasReturn = false;
         if (lastStmt && retType !== "void" && lastStmt instanceof AST.ExpressionStatement && lastStmt.expression) {
             const val = this.emitExpression(lastStmt.expression);
-            const expr = lastStmt.expression;
-            const isPointerLocal = expr instanceof AST.Identifier && this.localIsPtr.has(expr.value);
-            const isReturningRcVar = expr instanceof AST.Identifier && this.isRcType(retType) && !this.isFreshRcValue(expr);
-            if (isReturningRcVar) {
-                const retAddr = this.locals.get((expr as AST.Identifier).value);
-                if (retAddr) this.emitRcRetainAddr(retAddr);
-            }
-            this.emitScopeRelease();
-            if (isPointerLocal) {
-                const loadReg = this.nextRegister();
-                this.output += `  ${loadReg} = load ${retType}, ${retType}* ${val}\n`;
-                this.output += `  ret ${retType} ${loadReg}\n`;
+
+            // Check if we're at an unreachable point (e.g., if/else where all branches returned)
+            const lastEmittedLine = this.output.trimEnd().split("\n").pop()?.trim() || "";
+            if (lastEmittedLine.startsWith("ret ")) {
+                hasReturn = true;
+            } else if (lastEmittedLine.endsWith(":")) {
+                this.output += `  unreachable\n`;
+                hasReturn = true;
             } else {
-                this.output += `  ret ${retType} ${val}\n`;
+                const expr = lastStmt.expression;
+                const isPointerLocal = expr instanceof AST.Identifier && this.localIsPtr.has(expr.value);
+                const isReturningRcVar = expr instanceof AST.Identifier && this.isRcType(retType) && !this.isFreshRcValue(expr);
+                if (isReturningRcVar) {
+                    const retAddr = this.locals.get((expr as AST.Identifier).value);
+                    if (retAddr) this.emitRcRetainAddr(retAddr);
+                }
+                this.emitScopeRelease();
+                if (isPointerLocal) {
+                    const loadReg = this.nextRegister();
+                    this.output += `  ${loadReg} = load ${retType}, ${retType}* ${val}\n`;
+                    this.output += `  ret ${retType} ${loadReg}\n`;
+                } else {
+                    this.output += `  ret ${retType} ${val}\n`;
+                }
+                hasReturn = true;
             }
-            hasReturn = true;
         } else if (lastStmt) {
             this.emitStatement(lastStmt);
         }
@@ -665,6 +695,7 @@ export class LLVMEmitter {
 
         // Restore state
         this.locals = oldLocals;
+        this.localNameCounts = oldLocalNameCounts;
         this.localTypes = oldLocalTypes;
         this.localIsPtr = oldLocalIsPtr;
         this.registerCounter = oldReg;
@@ -701,6 +732,8 @@ export class LLVMEmitter {
             this.output += `declare i32 @fs_file_write_string(%File*, %String*)\n`;
             this.output += `declare i32 @fs_file_seek(%File*, i64, i32)\n`;
             this.output += `declare i64 @fs_file_tell(%File*)\n`;
+            this.output += `declare %String @fs_file_read_to_string(%String*)\n`;
+            this.output += `declare i32 @fs_file_write_to_string(%String*, %String*)\n`;
             this.output += `declare %String @fs_int_to_string(i32)\n`;
             this.output += `declare %String @fs_float_to_string(double)\n`;
             this.output += `declare %String @fs_bool_to_string(i1)\n`;
@@ -721,7 +754,10 @@ export class LLVMEmitter {
                     // Extract module prefix (e.g., "m2" from "m2_fs_string_alloc")
                     const modulePrefix = mangledName.split("_")[0];
                     this.runtimeStringType = `%struct.${modulePrefix}_fs_String`;
-                    break;
+                }
+                if (canonicalName === "fs_file_open") {
+                    const modulePrefix = mangledName.split("_")[0];
+                    this.runtimeFileType = `%struct.${modulePrefix}_fs_File`;
                 }
             }
         }
@@ -943,11 +979,13 @@ export class LLVMEmitter {
         const oldLocals = new Map(this.locals);
         const oldLocalTypes = new Map(this.localTypes);
         const oldLocalIsPtr = new Set(this.localIsPtr);
+        const oldLocalNameCounts = new Map(this.localNameCounts);
         const oldReg = this.registerCounter;
         const oldRcScopeStack = this.rcScopeStack;
         const oldDroppedVars = new Set(this.droppedVars);
         const oldInsideRuntime = this.insideRuntimeFn;
         this.locals.clear();
+        this.localNameCounts.clear();
         this.localIsPtr.clear();
         this.registerCounter = 0;
         this.rcScopeStack = [];
@@ -1006,8 +1044,13 @@ export class LLVMEmitter {
             const val = this.emitExpression(lastStmt.expression);
 
             // Check if the emitted expression already produced a ret (e.g., return inside unsafe block)
+            // Also check if we're at an unreachable label (if/else where all branches returned)
             const lastEmittedLine = this.output.trimEnd().split("\n").pop()?.trim() || "";
             if (lastEmittedLine.startsWith("ret ")) {
+                hasReturn = true;
+            } else if (lastEmittedLine.endsWith(":")) {
+                // Unreachable code after if/else where all branches returned
+                this.output += `  unreachable\n`;
                 hasReturn = true;
             } else {
                 // Pointer-semantic locals need a load to get the struct value for ret
@@ -1055,6 +1098,7 @@ export class LLVMEmitter {
         this.popRcScope();
         this.output += `}\n\n`;
         this.locals = oldLocals;
+        this.localNameCounts = oldLocalNameCounts;
         this.localTypes = oldLocalTypes;
         this.localIsPtr = oldLocalIsPtr;
         this.registerCounter = oldReg;
@@ -1065,6 +1109,7 @@ export class LLVMEmitter {
 
     private emitMain(program: AST.Program) {
         this.locals.clear();
+        this.localNameCounts.clear();
         this.localIsPtr.clear();
         this.registerCounter = 0;
         this.droppedVars.clear();
@@ -1175,7 +1220,7 @@ export class LLVMEmitter {
                 }
             }
 
-            const varReg = `%${stmt.name.value}.addr`;
+            const varReg = this.uniqueVarAddr(stmt.name.value);
             this.output += `  ${varReg} = alloca ${type}\n`;
             this.output += `  store ${type} ${valReg}, ${type}* ${varReg}\n`;
             this.locals.set(stmt.name.value, varReg);
@@ -1296,7 +1341,7 @@ export class LLVMEmitter {
         const endVal = this.emitExpression(range.end);
 
         // Allocate loop variable and store start value
-        const varAddr = `%${varName}.addr`;
+        const varAddr = this.uniqueVarAddr(varName);
         this.output += `  ${varAddr} = alloca i32\n`;
         this.output += `  store i32 ${startVal}, i32* ${varAddr}\n`;
         this.locals.set(varName, varAddr);
@@ -1363,7 +1408,7 @@ export class LLVMEmitter {
         this.output += `  store i32 0, i32* ${idxAddr}\n`;
 
         // Allocate loop variable
-        const varAddr = `%${varName}.addr`;
+        const varAddr = this.uniqueVarAddr(varName);
         this.output += `  ${varAddr} = alloca ${elemType}\n`;
         this.locals.set(varName, varAddr);
         this.localTypes.set(varName, elemType);
@@ -1434,7 +1479,7 @@ export class LLVMEmitter {
         this.output += `  store i32 0, i32* ${cursorAddr}\n`;
 
         // Allocate loop variable
-        const varAddr = `%${varName}.addr`;
+        const varAddr = this.uniqueVarAddr(varName);
         this.output += `  ${varAddr} = alloca ${keyType}\n`;
         this.locals.set(varName, varAddr);
         this.localTypes.set(varName, keyType);
@@ -1561,6 +1606,12 @@ export class LLVMEmitter {
             if (expr.receiver.value === "Vec" && expr.method.value === "new") return this.getVecStructType();
             // HashMap::<K,V>::new() returns the HashMap struct type
             if (expr.receiver.value === "HashMap" && expr.method.value === "new") return this.getHashMapStructType();
+            // File static methods
+            if (expr.receiver.value === "File") {
+                if (expr.method.value === "open") return this.getFileStructType();
+                if (expr.method.value === "read_to_string") return this.getStringType();
+                if (expr.method.value === "write_to_string") return "i32";
+            }
             // Math static calls: return double if any argument is double
             if (expr.receiver.value === "Math") {
                 if (expr.arguments.some(a => this.getExpressionType(a) === "double")) return "double";
@@ -1989,6 +2040,51 @@ export class LLVMEmitter {
             return this.emitEnumVariantConstruction(enumName, expr.method.value, expr.arguments);
         }
 
+        // File::open(filename, mode) → call fs_file_open
+        if (expr.receiver.value === "File" && expr.method.value === "open") {
+            const fileStructType = this.getFileStructType();
+            const stringType = this.getStringType();
+            const filenameVal = this.emitExpression(expr.arguments[0]);
+            const modeVal = this.emitExpression(expr.arguments[1]);
+            const fnAddr = this.nextRegister();
+            this.output += `  ${fnAddr} = alloca ${stringType}\n`;
+            this.output += `  store ${stringType} ${filenameVal}, ${stringType}* ${fnAddr}\n`;
+            const modeAddr = this.nextRegister();
+            this.output += `  ${modeAddr} = alloca ${stringType}\n`;
+            this.output += `  store ${stringType} ${modeVal}, ${stringType}* ${modeAddr}\n`;
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call ${fileStructType} @fs_file_open(${stringType}* ${fnAddr}, ${stringType}* ${modeAddr})\n`;
+            return reg;
+        }
+
+        // File::read_to_string(filename) → call fs_file_read_to_string
+        if (expr.receiver.value === "File" && expr.method.value === "read_to_string") {
+            const stringType = this.getStringType();
+            const filenameVal = this.emitExpression(expr.arguments[0]);
+            const fnAddr = this.nextRegister();
+            this.output += `  ${fnAddr} = alloca ${stringType}\n`;
+            this.output += `  store ${stringType} ${filenameVal}, ${stringType}* ${fnAddr}\n`;
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call ${stringType} @fs_file_read_to_string(${stringType}* ${fnAddr})\n`;
+            return reg;
+        }
+
+        // File::write_to_string(filename, contents) → call fs_file_write_to_string
+        if (expr.receiver.value === "File" && expr.method.value === "write_to_string") {
+            const stringType = this.getStringType();
+            const filenameVal = this.emitExpression(expr.arguments[0]);
+            const contentsVal = this.emitExpression(expr.arguments[1]);
+            const fnAddr = this.nextRegister();
+            this.output += `  ${fnAddr} = alloca ${stringType}\n`;
+            this.output += `  store ${stringType} ${filenameVal}, ${stringType}* ${fnAddr}\n`;
+            const cAddr = this.nextRegister();
+            this.output += `  ${cAddr} = alloca ${stringType}\n`;
+            this.output += `  store ${stringType} ${contentsVal}, ${stringType}* ${cAddr}\n`;
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i32 @fs_file_write_to_string(${stringType}* ${fnAddr}, ${stringType}* ${cAddr})\n`;
+            return reg;
+        }
+
         // Math static calls: Math::abs(x), Math::min(a, b), etc.
         if (expr.receiver.value === "Math") {
             const methodName = expr.method.value;
@@ -2407,6 +2503,13 @@ export class LLVMEmitter {
 
         private nextLabel(prefix: string): string { return `${prefix}${this.labelCounter++}`; }
 
+        private uniqueVarAddr(name: string): string {
+            const count = this.localNameCounts.get(name) || 0;
+            this.localNameCounts.set(name, count + 1);
+            if (count === 0) return `%${name}.addr`;
+            return `%${name}.addr.${count}`;
+        }
+
     
 
         private emitIfExpression(expr: AST.IfExpression): string {
@@ -2757,6 +2860,7 @@ export class LLVMEmitter {
         const oldLocalTypes = new Map(this.localTypes);
         const oldLocalIsPtr = new Set(this.localIsPtr);
         const oldLocalMutable = new Set(this.localMutable);
+        const oldLocalNameCounts = new Map(this.localNameCounts);
         const oldReg = this.registerCounter;
         const oldRcScopeStack = this.rcScopeStack;
         const oldDroppedVars = new Set(this.droppedVars);
@@ -2764,6 +2868,7 @@ export class LLVMEmitter {
         const savedOutput = this.output;
 
         this.locals.clear();
+        this.localNameCounts.clear();
         this.localIsPtr.clear();
         this.localMutable.clear();
         this.registerCounter = 0;
@@ -2852,6 +2957,9 @@ export class LLVMEmitter {
             const lastEmittedLine = this.output.trimEnd().split("\n").pop()?.trim() || "";
             if (lastEmittedLine.startsWith("ret ")) {
                 hasReturn = true;
+            } else if (lastEmittedLine.endsWith(":")) {
+                this.output += `  unreachable\n`;
+                hasReturn = true;
             } else {
                 const bodyExpr = lastStmt.expression;
                 const isReturningRcVar = bodyExpr instanceof AST.Identifier && this.isRcType(retType) && !this.isFreshRcValue(bodyExpr);
@@ -2904,6 +3012,7 @@ export class LLVMEmitter {
 
         // Restore emitter state
         this.locals = oldLocals;
+        this.localNameCounts = oldLocalNameCounts;
         this.localTypes = oldLocalTypes;
         this.localIsPtr = oldLocalIsPtr;
         this.localMutable = oldLocalMutable;
@@ -3118,12 +3227,14 @@ export class LLVMEmitter {
         const oldLocals = new Map(this.locals);
         const oldLocalTypes = new Map(this.localTypes);
         const oldLocalIsPtr = new Set(this.localIsPtr);
+        const oldLocalNameCounts = new Map(this.localNameCounts);
         const oldReg = this.registerCounter;
         const oldRcScopeStack = this.rcScopeStack;
         const oldDroppedVars = new Set(this.droppedVars);
         const oldInsideRuntime = this.insideRuntimeFn;
         const oldBindings = new Map(this.currentTypeBindings);
         this.locals.clear();
+        this.localNameCounts.clear();
         this.localIsPtr.clear();
         this.registerCounter = 0;
         this.rcScopeStack = [];
@@ -3177,6 +3288,9 @@ export class LLVMEmitter {
             const lastEmittedLine = this.output.trimEnd().split("\n").pop()?.trim() || "";
             if (lastEmittedLine.startsWith("ret ")) {
                 hasReturn = true;
+            } else if (lastEmittedLine.endsWith(":")) {
+                this.output += `  unreachable\n`;
+                hasReturn = true;
             } else {
                 const expr = lastStmt.expression;
                 const isPointerLocal = expr instanceof AST.Identifier && this.localIsPtr.has(expr.value);
@@ -3217,6 +3331,7 @@ export class LLVMEmitter {
         this.output = savedOutput;
 
         this.locals = oldLocals;
+        this.localNameCounts = oldLocalNameCounts;
         this.localTypes = oldLocalTypes;
         this.localIsPtr = oldLocalIsPtr;
         this.registerCounter = oldReg;
@@ -3274,6 +3389,11 @@ export class LLVMEmitter {
         // HashMap method calls
         if (this.isHashMapType(selfType)) {
             return this.emitHashMapMethodCall(expr, selfType);
+        }
+
+        // File method calls: file.read_line(), file.write_string(s), file.close(), etc.
+        if (this.isFileType(selfType)) {
+            return this.emitFileMethodCall(expr, selfType);
         }
 
         // General trait-based method dispatch
@@ -3756,6 +3876,59 @@ export class LLVMEmitter {
             const resultVec = this.nextRegister();
             this.output += `  ${resultVec} = load ${vecStructType}, ${vecStructType}* ${newVecAddr}\n`;
             return resultVec;
+        }
+
+        return "0";
+    }
+
+    private emitFileMethodCall(expr: AST.MethodCallExpression, selfType: string): string {
+        const fileStructType = this.getFileStructType();
+        const stringType = this.getStringType();
+        const methodName = expr.method.value;
+
+        // Get pointer to the File struct (need alloca address, not loaded value)
+        let selfPtr: string;
+        if (expr.object instanceof AST.Identifier) {
+            const addr = this.locals.get(expr.object.value);
+            selfPtr = addr || this.emitExpression(expr.object);
+        } else {
+            selfPtr = this.emitExpression(expr.object);
+        }
+
+        if (methodName === "read_line") {
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call ${stringType} @fs_file_read_line(${fileStructType}* ${selfPtr})\n`;
+            return reg;
+        }
+
+        if (methodName === "write_string") {
+            const strVal = this.emitExpression(expr.arguments[0]);
+            const strAddr = this.nextRegister();
+            this.output += `  ${strAddr} = alloca ${stringType}\n`;
+            this.output += `  store ${stringType} ${strVal}, ${stringType}* ${strAddr}\n`;
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i32 @fs_file_write_string(${fileStructType}* ${selfPtr}, ${stringType}* ${strAddr})\n`;
+            return reg;
+        }
+
+        if (methodName === "close") {
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i32 @fs_file_close(${fileStructType}* ${selfPtr})\n`;
+            return reg;
+        }
+
+        if (methodName === "seek") {
+            const offset = this.emitExpression(expr.arguments[0]);
+            const whence = this.emitExpression(expr.arguments[1]);
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i32 @fs_file_seek(${fileStructType}* ${selfPtr}, i64 ${offset}, i32 ${whence})\n`;
+            return reg;
+        }
+
+        if (methodName === "tell") {
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i64 @fs_file_tell(${fileStructType}* ${selfPtr})\n`;
+            return reg;
         }
 
         return "0";
@@ -4385,7 +4558,7 @@ export class LLVMEmitter {
         }
 
         // Allocate loop variable
-        const varAddr = `%${varName}.addr`;
+        const varAddr = this.uniqueVarAddr(varName);
         this.output += `  ${varAddr} = alloca ${currentElemType}\n`;
         this.locals.set(varName, varAddr);
         this.localTypes.set(varName, currentElemType);
@@ -4650,7 +4823,7 @@ export class LLVMEmitter {
                     this.output += `  ${idxAddr} = alloca i32\n`;
                     this.output += `  store i32 0, i32* ${idxAddr}\n`;
 
-                    const varAddr = `%${varName}.addr`;
+                    const varAddr = this.uniqueVarAddr(varName);
                     this.output += `  ${varAddr} = alloca ${elemType}\n`;
                     this.locals.set(varName, varAddr);
                     this.localTypes.set(varName, elemType);
@@ -4725,6 +4898,16 @@ export class LLVMEmitter {
             if (methodName === "contains_key") return "i32";
             if (methodName === "keys" || methodName === "values") return this.getVecStructType();
             if (methodName === "values_iter" || methodName === "keys_iter") return "i32"; // Consumed by chain terminals
+            return "void";
+        }
+
+        // File methods
+        if (this.isFileType(selfType)) {
+            if (methodName === "read_line") return this.getStringType();
+            if (methodName === "write_string") return "i32";
+            if (methodName === "close") return "i32";
+            if (methodName === "seek") return "i32";
+            if (methodName === "tell") return "i64";
             return "void";
         }
 

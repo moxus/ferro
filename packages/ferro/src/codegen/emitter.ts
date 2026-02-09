@@ -183,7 +183,32 @@ export class Emitter {
 
     private emitProgram(program: AST.Program): string {
         const runtime = `
+import * as fs from "fs";
+
 // Ferro Runtime
+class _File {
+  private fd: number;
+  private _buf: string = "";
+  private _lines: string[] = [];
+  private _lineIdx: number = 0;
+  private _mode: string;
+  constructor(name: string, mode: string) {
+    this._mode = mode;
+    this.fd = fs.openSync(name, mode);
+    if (mode.startsWith("r")) {
+      this._buf = fs.readFileSync(name, "utf8");
+      this._lines = this._buf.split("\\n");
+    }
+  }
+  read_line(): string {
+    if (this._lineIdx >= this._lines.length) return "";
+    return this._lines[this._lineIdx++];
+  }
+  write_string(s: string): number { return fs.writeSync(this.fd, s); }
+  close(): number { fs.closeSync(this.fd); return 0; }
+  seek(_offset: number, _whence: number): number { return 0; }
+  tell(): number { return 0; }
+}
 class _ResultError extends Error {
   public error: any;
   constructor(error: any) { super(); this.error = error; }
@@ -256,6 +281,7 @@ function _try_option(opt: any) {
   if (opt && opt.some === true) return opt.value;
   throw new _OptionNoneError();
 }
+function print(...args: any[]) { console.log(...args); }
 `;
         return runtime + program.statements.map((stmt) => this.emit(stmt)).join("\n");
     }
@@ -562,6 +588,24 @@ ${bodyStmts}
         if (receiverName === "Vec" && expr.method.value === "new") return "[]";
         // HashMap::new() → new Map()
         if (receiverName === "HashMap" && expr.method.value === "new") return "new Map()";
+
+        // File static methods
+        if (receiverName === "File") {
+            const methodName = expr.method.value;
+            if (methodName === "open") {
+                const args = expr.arguments.map(a => this.emit(a)).join(", ");
+                return `new _File(${args})`;
+            }
+            if (methodName === "read_to_string") {
+                const filename = this.emit(expr.arguments[0]);
+                return `fs.readFileSync(${filename}, "utf8")`;
+            }
+            if (methodName === "write_to_string") {
+                const filename = this.emit(expr.arguments[0]);
+                const contents = this.emit(expr.arguments[1]);
+                return `(() => { fs.writeFileSync(${filename}, ${contents}); return (${contents}).length; })()`;
+            }
+        }
 
         // Math static calls → JavaScript Math.*
         if (receiverName === "Math") {

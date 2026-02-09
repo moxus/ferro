@@ -521,6 +521,16 @@ export class Analyzer {
                 return IntType;
             }
 
+            // File static methods
+            if (receiverName === "File") {
+                expr.arguments.forEach(a => this.visitExpression(a));
+                const methodName = expr.method.value;
+                if (methodName === "open") return FileType;
+                if (methodName === "read_to_string") return StringType;
+                if (methodName === "write_to_string") return IntType;
+                return UnknownType;
+            }
+
             // Inherent static method calls: Type::method()
             const inherentMethod = this.findInherentMethod(receiverName, expr.method.value);
             if (inherentMethod) {
@@ -901,6 +911,17 @@ export class Analyzer {
                 }
                 // Fallthrough for unknown methods
                 expr.arguments.forEach(a => this.visitExpression(a));
+                return UnknownType;
+            }
+
+            // File method return types
+            if (receiverType.kind === "primitive" && receiverType.name === "File") {
+                expr.arguments.forEach(a => this.visitExpression(a));
+                if (methodName === "read_line") return StringType;
+                if (methodName === "write_string") return IntType;
+                if (methodName === "close") return IntType;
+                if (methodName === "seek") return IntType;
+                if (methodName === "tell") return IntType;
                 return UnknownType;
             }
 

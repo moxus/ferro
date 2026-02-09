@@ -360,6 +360,18 @@
 
 ---
 
+### 38. High-Level File I/O API
+- [x] **`File::open(name, mode)`**: Static constructor returning a `File` handle. Maps to `fs_file_open` (LLVM) / `new _File(name, mode)` (TS).
+- [x] **Method Calls**: `file.read_line()`, `file.write_string(s)`, `file.close()`, `file.seek(offset, whence)`, `file.tell()` — compiler-special-cased dispatch (same pattern as Vec/HashMap).
+- [x] **`File::read_to_string(name)`**: Convenience static — opens file, reads entire contents into a string, closes. Runtime function `fs_file_read_to_string` in `runtime.fe`.
+- [x] **`File::write_to_string(name, contents)`**: Convenience static — opens file, writes string, closes. Runtime function `fs_file_write_to_string` in `runtime.fe`.
+- [x] **Analyzer**: File static calls return correct types (`File::open` → `File`, `File::read_to_string` → `string`, `File::write_to_string` → `int`). Method calls return appropriate types.
+- [x] **LLVM Backend**: `isFileType()`/`getFileStructType()` helpers, `emitFileMethodCall()` dispatch, File static call emission, runtime type resolution in self-hosted mode.
+- [x] **TypeScript Backend**: `_File` wrapper class using Node.js `fs` module (line-buffered `read_line`, `fs.openSync`/`writeSync`/`closeSync`). `File::read_to_string` → `fs.readFileSync`, `File::write_to_string` → `fs.writeFileSync`.
+- [x] **Bug Fixes**: Fixed LLVM emitter variable name collision (`uniqueVarAddr` for scope-shadowed variables), unreachable return codegen for struct-returning if/else functions, added `print()` to TS runtime preamble.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -387,7 +399,7 @@
 - **Async/Await**: Important for JS ecosystem interop (large undertaking).
 
 ### Existing Planned Items
-- **Standard Library**: ~~File I/O~~, ~~Math~~, ~~Error Handling~~ — completed. Remaining: higher-level abstractions.
+- **Standard Library**: ~~File I/O~~, ~~Math~~, ~~Error Handling~~ — completed (see §28, §34, §38).
 - **Cycle Detection** (Low Priority): Optional weak references or cycle-collector.
 - **FFI Enhancements**: More robust platform-specific ABI handling.
 
