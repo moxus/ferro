@@ -201,4 +201,61 @@ describe("Bidirectional Type Inference", () => {
             expect(analyzer.diagnostics.length).toBe(0);
         });
     });
+
+    describe("f64 floating-point types", () => {
+        it("should type-check f64 literals and arithmetic", () => {
+            const input = `
+                let pi: f64 = 3.14;
+                let e: f64 = 2.718;
+                let sum: f64 = pi + e;
+                let diff: f64 = pi - e;
+                let prod: f64 = pi * e;
+                let quot: f64 = pi / e;
+            `;
+            const { analyzer } = parseAndAnalyze(input);
+            expect(analyzer.diagnostics.length).toBe(0);
+        });
+
+        it("should type-check f64 comparisons", () => {
+            const input = `
+                let a: f64 = 1.5;
+                let b: f64 = 2.5;
+                let gt: bool = a > b;
+                let eq: bool = a == a;
+                let lt: bool = a < b;
+            `;
+            const { analyzer } = parseAndAnalyze(input);
+            expect(analyzer.diagnostics.length).toBe(0);
+        });
+
+        it("should type-check f64 function parameters and return", () => {
+            const input = `
+                fn add(a: f64, b: f64) -> f64 {
+                    a + b
+                }
+                let result: f64 = add(1.5, 2.5);
+            `;
+            const { analyzer } = parseAndAnalyze(input);
+            expect(analyzer.diagnostics.length).toBe(0);
+        });
+
+        it("should allow f64 in f-string interpolation", () => {
+            const input = `
+                let x: f64 = 3.14;
+                let msg: string = f"value is {x}";
+            `;
+            const { analyzer } = parseAndAnalyze(input);
+            expect(analyzer.diagnostics.length).toBe(0);
+        });
+
+        it("should reject mixed int/f64 arithmetic", () => {
+            const input = `
+                let a: f64 = 3.14;
+                let b: int = 2;
+                let c: f64 = a + b;
+            `;
+            const { analyzer } = parseAndAnalyze(input);
+            expect(analyzer.diagnostics.length).toBeGreaterThan(0);
+        });
+    });
 });

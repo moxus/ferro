@@ -138,6 +138,24 @@ export class IntegerLiteral implements Expression {
   }
 }
 
+export class FloatLiteral implements Expression {
+  token: Token;
+  value: number;
+
+  constructor(token: Token, value: number) {
+    this.token = token;
+    this.value = value;
+  }
+
+  expressionNode() { }
+  tokenLiteral(): string {
+    return this.token.literal;
+  }
+  toString(): string {
+    return this.token.literal;
+  }
+}
+
 export class StringLiteral implements Expression {
   token: Token;
   value: string;

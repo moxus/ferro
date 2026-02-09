@@ -25,6 +25,7 @@
 - **Data Structures (Structs)**: `struct` definitions, initialization, and field access implemented in both TS and LLVM backends.
 - **Traits & Impls**: Nominal behavioral typing with a global trait registry.
 - **JS Interop**: Member access (`.`) and array literals (`[]`) for calling native JS functions.
+- **Floating-Point Type (`f64`)**: Full-stack `f64` support — float literals (`3.14`), `double` in LLVM with `fadd`/`fsub`/`fmul`/`fdiv`/`fcmp`, `number` in TS backend. Casts (`as f64`, `as int`) using `sitofp`/`fptosi`. Runtime: `fs_print_float`, `fs_float_to_string`. F-string interpolation with floats. Math utilities return `f64` when given `f64` arguments.
 
 ### 4. Backends
 - **TypeScript Target**: Transpiles to clean TS with an automatically injected runtime.
@@ -330,7 +331,7 @@
 ## 🛠 Planned Features
 
 ### Tier 1 — High Impact (Next Up)
-- **Floating-Point Type (`f64`)**: Float literals (`3.14`), `double` in LLVM, `number` in TS. Runtime: `fs_float_to_string`, Math overloads. Unlocks numeric computation beyond integers.
+- ~~**Floating-Point Type (`f64`)**~~: **Completed (see §3 Syntax Features)**
 - **`break` / `continue`**: Loop control keywords. Lexer keywords, AST nodes, analyzer validation (must be inside loop), LLVM branch to loop exit/header, TS pass-through.
 - **Inherent `impl` Blocks**: `impl Point { fn new() -> Point { ... } }` without requiring a trait. Enables idiomatic struct methods and constructors.
 - **`Option<T>` Built-in**: Prelude enum `Option<T> { Some(T), None }` with `?` operator integration and compiler awareness.

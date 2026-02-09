@@ -90,6 +90,16 @@ export class LLVMEmitter {
     // Whether we are inside a runtime function (skip RC insertion for runtime internals)
     private insideRuntimeFn: boolean = false;
 
+    private floatPrintfFormatEmitted: boolean = false;
+
+    private ensureFloatPrintfFormat(): string {
+        if (!this.floatPrintfFormatEmitted) {
+            this.globals += `@.str.float = private unnamed_addr constant [4 x i8] c"%f\\0A\\00"\n`;
+            this.floatPrintfFormatEmitted = true;
+        }
+        return "@.str.float";
+    }
+
     private isStringType(t: string): boolean {
         return t === "%String" || (this.runtimeStringType !== "" && t === this.runtimeStringType);
     }
@@ -242,7 +252,7 @@ export class LLVMEmitter {
         // and identify runtime exports (functions matching fs_string_* / fs_print_*)
         const runtimeFnNames = new Set([
             "fs_string_alloc", "fs_string_from_literal", "fs_string_concat",
-            "fs_print_string", "fs_print_int",
+            "fs_print_string", "fs_print_int", "fs_print_float",
             "fs_string_eq", "fs_string_cmp", "fs_string_len", "fs_string_index",
             "fs_string_slice", "fs_string_free",
             "fs_rc_retain", "fs_rc_release",
@@ -255,7 +265,8 @@ export class LLVMEmitter {
             "fs_file_open", "fs_file_close", "fs_file_read", "fs_file_write",
             "fs_file_read_line", "fs_file_write_string", "fs_file_seek", "fs_file_tell",
             "fs_math_abs", "fs_math_min", "fs_math_max", "fs_math_pow", "fs_math_sqrt", "fs_math_clamp",
-            "fs_int_to_string", "fs_bool_to_string"
+            "fs_math_abs_f", "fs_math_min_f", "fs_math_max_f", "fs_math_sqrt_f", "fs_math_clamp_f",
+            "fs_int_to_string", "fs_float_to_string", "fs_bool_to_string"
         ]);
         modules.forEach((mod, path) => {
             mod.program.statements.forEach(stmt => {
@@ -416,6 +427,7 @@ export class LLVMEmitter {
         }
 
         if (typeName === "int") return "i32";
+        if (typeName === "f64") return "double";
         if (typeName === "bool") return "i1";
         if (typeName === "string") return this.runtimeStringType || "%String";
         if (typeName === "void") return "void";
@@ -686,7 +698,9 @@ export class LLVMEmitter {
             this.output += `declare i32 @fs_file_seek(%File*, i64, i32)\n`;
             this.output += `declare i64 @fs_file_tell(%File*)\n`;
             this.output += `declare %String @fs_int_to_string(i32)\n`;
+            this.output += `declare %String @fs_float_to_string(double)\n`;
             this.output += `declare %String @fs_bool_to_string(i1)\n`;
+            this.output += `declare void @fs_print_float(double)\n`;
             this.output += `declare i32 @printf(i8*, ...)\n`;
             this.output += `declare i8* @malloc(i32)\n`;
             this.output += `declare void @free(i8*)\n`;
@@ -775,6 +789,7 @@ export class LLVMEmitter {
         if (t === "i8") return 1;
         if (t === "i32") return 4;
         if (t === "i64") return 8;
+        if (t === "double") return 8;
         if (t.endsWith("*")) return 8;
         if (t === "%String" || t === this.runtimeStringType) return 16;
         return 8;
@@ -858,6 +873,10 @@ export class LLVMEmitter {
                 const val = this.emitExpression(part);
                 if (this.isStringType(exprType)) {
                     stringRegs.push(val);
+                } else if (exprType === "double") {
+                    const reg = this.nextRegister();
+                    this.output += `  ${reg} = call ${strType} @fs_float_to_string(double ${val})\n`;
+                    stringRegs.push(reg);
                 } else if (exprType === "i32") {
                     const reg = this.nextRegister();
                     this.output += `  ${reg} = call ${strType} @fs_int_to_string(i32 ${val})\n`;
@@ -1416,6 +1435,7 @@ export class LLVMEmitter {
     private getExpressionType(expr: AST.Expression): string {
         if (expr instanceof AST.RangeExpression) return "i32";
         if (expr instanceof AST.IntegerLiteral) return "i32";
+        if (expr instanceof AST.FloatLiteral) return "double";
         if (expr instanceof AST.BooleanLiteral) return "i1";
         if (expr instanceof AST.NullLiteral) return "i8*";
         if (expr instanceof AST.StringLiteral) return this.runtimeStringType || "%String";
@@ -1492,6 +1512,9 @@ export class LLVMEmitter {
             const t = this.getExpressionType(expr.right);
             return t.endsWith("*") ? t.slice(0, -1) : "i32";
         }
+        if (expr instanceof AST.PrefixExpression && expr.operator === "-") {
+            return this.getExpressionType(expr.right);
+        }
         if (expr instanceof AST.InfixExpression) {
              if (["==","!=","<",">","<=",">=","&&","||"].includes(expr.operator)) return "i1";
              const lt = this.getExpressionType(expr.left);
@@ -1504,8 +1527,13 @@ export class LLVMEmitter {
             if (expr.receiver.value === "Vec" && expr.method.value === "new") return this.getVecStructType();
             // HashMap::<K,V>::new() returns the HashMap struct type
             if (expr.receiver.value === "HashMap" && expr.method.value === "new") return this.getHashMapStructType();
-            // Math static calls return i32
-            if (expr.receiver.value === "Math") return "i32";
+            // Math static calls: return double if any argument is double
+            if (expr.receiver.value === "Math") {
+                if (expr.arguments.some(a => this.getExpressionType(a) === "double")) return "double";
+                // sqrt always returns double
+                if (expr.method.value === "sqrt") return "double";
+                return "i32";
+            }
 
             const sym = this.currentScope?.resolve(expr.receiver.value);
             let enumName = this.getMangledName(expr.receiver.value, this.currentModulePath);
@@ -1527,6 +1555,7 @@ export class LLVMEmitter {
                     if (targetTypeName.startsWith("%struct.")) targetTypeName = targetTypeName.replace("%struct.", "");
                     else if (targetTypeName.startsWith("%enum.")) targetTypeName = targetTypeName.replace("%enum.", "");
                     else if (targetTypeName === "i32") targetTypeName = "int";
+                    else if (targetTypeName === "double") targetTypeName = "f64";
                     else if (targetTypeName === "i1") targetTypeName = "bool";
                     const funcName = `${expr.receiver.value}_${targetTypeName}_${expr.method.value}`;
                     const retType = this.functionReturnTypes.get(funcName);
@@ -1573,6 +1602,13 @@ export class LLVMEmitter {
         if (expr instanceof AST.StaticCallExpression) return this.emitStaticCallExpression(expr);
 
         if (expr instanceof AST.IntegerLiteral) return expr.value.toString();
+        if (expr instanceof AST.FloatLiteral) {
+            // LLVM requires hex representation for exact double constants, but
+            // decimal notation works for simple cases. Use scientific notation.
+            const val = expr.value;
+            // LLVM accepts decimal float notation like 3.140000e+00
+            return `${val.toExponential()}`;
+        }
         if (expr instanceof AST.BooleanLiteral) return expr.value ? "1" : "0";
         if (expr instanceof AST.NullLiteral) return "null";
         if (expr instanceof AST.StringLiteral) return this.emitStringLiteral(expr);
@@ -1718,6 +1754,12 @@ export class LLVMEmitter {
 
             // Comparisons — use the actual operand type
             if (["==", "!=", "<", ">", "<=", ">="].includes(expr.operator)) {
+                if (leftType === "double") {
+                    // Floating-point comparison (ordered)
+                    const fcmpOp = expr.operator === "==" ? "oeq" : expr.operator === "!=" ? "one" : expr.operator === "<" ? "olt" : expr.operator === ">" ? "ogt" : expr.operator === "<=" ? "ole" : "oge";
+                    this.output += `  ${reg} = fcmp ${fcmpOp} double ${left}, ${right}\n`;
+                    return reg;
+                }
                 const cmpType = leftType.endsWith("*") ? leftType : (rightType.endsWith("*") ? rightType : leftType);
                 const cmpOp = expr.operator === "==" ? "eq" : expr.operator === "!=" ? "ne" : expr.operator === "<" ? "slt" : expr.operator === ">" ? "sgt" : expr.operator === "<=" ? "sle" : "sge";
                 this.output += `  ${reg} = icmp ${cmpOp} ${cmpType} ${left}, ${right}\n`;
@@ -1732,6 +1774,18 @@ export class LLVMEmitter {
             if (expr.operator === "||") {
                 this.output += `  ${reg} = or i1 ${left}, ${right}\n`;
                 return reg;
+            }
+
+            // Floating-point arithmetic
+            if (leftType === "double") {
+                let fop = "";
+                switch(expr.operator) {
+                    case "+": fop = "fadd"; break;
+                    case "-": fop = "fsub"; break;
+                    case "*": fop = "fmul"; break;
+                    case "/": fop = "fdiv"; break;
+                }
+                if (fop) { this.output += `  ${reg} = ${fop} double ${left}, ${right}\n`; return reg; }
             }
 
             // Integer arithmetic
@@ -1757,8 +1811,13 @@ export class LLVMEmitter {
 
         if (expr instanceof AST.PrefixExpression && expr.operator === "-") {
             const val = this.emitExpression(expr.right);
+            const valType = this.getExpressionType(expr.right);
             const reg = this.nextRegister();
-            this.output += `  ${reg} = sub i32 0, ${val}\n`;
+            if (valType === "double") {
+                this.output += `  ${reg} = fneg double ${val}\n`;
+            } else {
+                this.output += `  ${reg} = sub i32 0, ${val}\n`;
+            }
             return reg;
         }
         
@@ -2181,6 +2240,41 @@ export class LLVMEmitter {
             return reg;
         }
 
+        // Int to float (i32 → double)
+        if (srcType === "i32" && dstType === "double") {
+            this.output += `  ${reg} = sitofp i32 ${val} to double\n`;
+            return reg;
+        }
+        // Float to int (double → i32)
+        if (srcType === "double" && dstType === "i32") {
+            this.output += `  ${reg} = fptosi double ${val} to i32\n`;
+            return reg;
+        }
+        // i8 to float (i8 → double)
+        if (srcType === "i8" && dstType === "double") {
+            this.output += `  ${reg} = sitofp i8 ${val} to double\n`;
+            return reg;
+        }
+        // Float to i8 (double → i8)
+        if (srcType === "double" && dstType === "i8") {
+            const tmpReg = this.nextRegister();
+            this.output += `  ${tmpReg} = fptosi double ${val} to i32\n`;
+            this.output += `  ${reg} = trunc i32 ${tmpReg} to i8\n`;
+            return reg;
+        }
+        // Bool to float (i1 → double)
+        if (srcType === "i1" && dstType === "double") {
+            const tmpReg = this.nextRegister();
+            this.output += `  ${tmpReg} = zext i1 ${val} to i32\n`;
+            this.output += `  ${reg} = sitofp i32 ${tmpReg} to double\n`;
+            return reg;
+        }
+        // Float to bool (double → i1)
+        if (srcType === "double" && dstType === "i1") {
+            this.output += `  ${reg} = fcmp one double ${val}, 0.0\n`;
+            return reg;
+        }
+
         // Pointer to pointer (bitcast)
         if (srcType.endsWith("*") && dstType.endsWith("*")) {
             this.output += `  ${reg} = bitcast ${srcType} ${val} to ${dstType}\n`;
@@ -2341,6 +2435,17 @@ export class LLVMEmitter {
                     this.output += `  store ${strType} ${argVal}, ${strType}* ${ptrReg}\n`;
 
                     this.output += `  call void @fs_print_string(${strType}* ${ptrReg})\n`;
+
+                } else if (type === "double") {
+
+                    if (this.runtimeExports.size > 0) {
+                        this.output += `  call void @fs_print_float(double ${argVal})\n`;
+                    } else {
+                        // Use printf with %f format
+                        const fmtName = this.ensureFloatPrintfFormat();
+                        const ignored = this.nextRegister();
+                        this.output += `  ${ignored} = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* ${fmtName}, i32 0, i32 0), double ${argVal})\n`;
+                    }
 
                 } else if (this.runtimeExports.size > 0) {
 

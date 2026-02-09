@@ -50,6 +50,9 @@ export class Emitter {
         if (node instanceof AST.IntegerLiteral) {
             return node.value.toString();
         }
+        if (node instanceof AST.FloatLiteral) {
+            return node.value.toString();
+        }
         if (node instanceof AST.BooleanLiteral) {
             return node.value.toString();
         }
@@ -192,6 +195,7 @@ function _getType(obj: any) {
         // Map Ferro type names to JS runtime type names for _getType dispatch
         switch (fsType) {
             case "int": return "number";
+            case "f64": return "number";
             case "bool": return "boolean";
             case "string": return "string";
             default: return fsType;
@@ -256,6 +260,7 @@ function _getType(obj: any) {
         if (type instanceof AST.TypeIdentifier) {
             const name = type.value;
             const mapped = name === "int" ? "number"
+                : name === "f64" ? "number"
                 : name === "string" ? "string"
                 : name === "bool" ? "boolean"
                 : name === "void" ? "void"
@@ -271,6 +276,7 @@ function _getType(obj: any) {
         }
         const name = type.toString();
         if (name === "int") return "number";
+        if (name === "f64") return "number";
         if (name === "string") return "string";
         if (name === "bool") return "boolean";
         return "any";
@@ -281,6 +287,7 @@ function _getType(obj: any) {
         const targetName = node.targetType instanceof AST.TypeIdentifier ? node.targetType.value : node.targetType.toString();
         if (targetName === "bool") return `(!!(${inner}))`;
         if (targetName === "int" || targetName === "i8") return `((${inner}) | 0)`;
+        if (targetName === "f64") return `(+(${inner}))`;
         return inner;
     }
 

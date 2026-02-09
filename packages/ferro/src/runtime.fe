@@ -16,6 +16,7 @@ extern fn fwrite(ptr: *i8, size: i32, nmemb: i32, stream: *i8) -> i32;
 extern fn fseek(stream: *i8, offset: i64, whence: i32) -> i32;
 extern fn ftell(stream: *i8) -> i64;
 extern fn fgets(s: *i8, size: i32, stream: *i8) -> *i8;
+extern fn snprintf(buf: *i8, size: i32, fmt: *i8, ...) -> i32;
 
 // String struct - matches LLVM layout { i8*, i32, i32 }
 // Refcount is stored at ptr[-4] (4 bytes prepended to the heap allocation)
@@ -146,6 +147,27 @@ export fn fs_print_int(n: i32) {
     }
 }
 
+// Print a floating-point number followed by a newline
+export fn fs_print_float(n: f64) {
+    unsafe {
+        let buf: *i8 = malloc(32);
+        // Format string "%g\0" = [37, 103, 0]
+        let fmt: *i8 = malloc(3);
+        *fmt = 37 as i8;
+        *(fmt + 1) = 103 as i8;
+        *(fmt + 2) = 0 as i8;
+        let len: i32 = snprintf(buf, 32, fmt, n);
+        free(fmt);
+        let mut i: i32 = 0;
+        while (i < len) {
+            putchar(*(buf + i));
+            i = i + 1;
+        }
+        putchar(10);
+        free(buf);
+    }
+}
+
 // ---- Type Conversion ----
 
 // Convert an integer to a string
@@ -198,6 +220,23 @@ export fn fs_int_to_string(n: i32) -> fs_String {
         };
     }
     return s;
+}
+
+// Convert a float to a string (e.g. "3.14")
+export fn fs_float_to_string(n: f64) -> fs_String {
+    unsafe {
+        let buf: *i8 = malloc(32);
+        // Format string "%g\0" = [37, 103, 0]
+        let fmt: *i8 = malloc(3);
+        *fmt = 37 as i8;
+        *(fmt + 1) = 103 as i8;
+        *(fmt + 2) = 0 as i8;
+        let len: i32 = snprintf(buf, 32, fmt, n);
+        free(fmt);
+        let s: fs_String = fs_string_from_literal(buf, len);
+        free(buf);
+        return s;
+    }
 }
 
 // Convert a boolean to a string ("true" or "false")

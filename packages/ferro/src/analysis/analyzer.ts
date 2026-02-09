@@ -1,7 +1,7 @@
 import * as AST from "../ast/ast";
 import { Token, TokenType } from "../token";
 import { SymbolTable } from "./symbol_table";
-import { Type, IntType, StringType, BoolType, VoidType, NullType, FileType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
+import { Type, IntType, F64Type, StringType, BoolType, VoidType, NullType, FileType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
 
 export interface Diagnostic {
     message: string;
@@ -208,6 +208,7 @@ export class Analyzer {
 
     private visitExpression(expr: AST.Expression): Type {
         if (expr instanceof AST.IntegerLiteral) return IntType;
+        if (expr instanceof AST.FloatLiteral) return F64Type;
         if (expr instanceof AST.StringLiteral) return StringType;
         if (expr instanceof AST.BooleanLiteral) return BoolType;
         if (expr instanceof AST.NullLiteral) return NullType;
@@ -279,6 +280,7 @@ export class Analyzer {
 
             if (["+", "-", "*", "/"].includes(expr.operator)) {
                 if (typesEqual(left, IntType) && typesEqual(right, IntType)) return IntType;
+                if (typesEqual(left, F64Type) && typesEqual(right, F64Type)) return F64Type;
                 // Allow string concat
                 if (expr.operator === "+" && typesEqual(left, StringType)) return StringType;
                 // Allow pointer arithmetic: ptr + int or ptr - int
@@ -418,7 +420,9 @@ export class Analyzer {
 
             // Math static calls: Math::abs, Math::min, Math::max, etc.
             if (receiverName === "Math") {
-                expr.arguments.forEach(a => this.visitExpression(a));
+                const argTypes = expr.arguments.map(a => this.visitExpression(a));
+                // If any argument is f64, return f64
+                if (argTypes.some(t => typesEqual(t, F64Type))) return F64Type;
                 return IntType;
             }
 
@@ -628,8 +632,8 @@ export class Analyzer {
             for (const part of expr.parts) {
                 if (part instanceof AST.StringLiteral) continue;
                 const t = this.visitExpression(part);
-                if (t.kind !== "primitive" || !["int", "string", "bool", "i8", "any", "unknown"].includes(t.name)) {
-                    this.error(`Cannot interpolate type ${typeToString(t)} in f-string (expected int, string, or bool)`, expr.token);
+                if (t.kind !== "primitive" || !["int", "f64", "string", "bool", "i8", "any", "unknown"].includes(t.name)) {
+                    this.error(`Cannot interpolate type ${typeToString(t)} in f-string (expected int, f64, string, or bool)`, expr.token);
                 }
             }
             return StringType;
@@ -797,6 +801,7 @@ export class Analyzer {
         const name = t instanceof AST.TypeIdentifier ? t.value : t.toString();
         
         if (name === "int") return IntType;
+        if (name === "f64") return F64Type;
         if (name === "i8") return { kind: "primitive", name: "i8" }; // Or reuse constant
         if (name === "string") return StringType;
         if (name === "bool") return BoolType;

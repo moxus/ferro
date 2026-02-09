@@ -5,7 +5,7 @@ export interface EnumVariantInfo {
 }
 
 export type Type =
-    | { kind: "primitive", name: "int" | "string" | "bool" | "void" | "any" | "i8" | "null" | "File" }
+    | { kind: "primitive", name: "int" | "f64" | "string" | "bool" | "void" | "any" | "i8" | "null" | "File" }
     | { kind: "pointer", elementType: Type }
     | { kind: "function", params: Type[], returnType: Type }
     | { kind: "result", ok: Type, err: Type }
@@ -16,6 +16,7 @@ export type Type =
     | { kind: "unknown" }; // For compilation errors or placeholders
 
 export const IntType: Type = { kind: "primitive", name: "int" };
+export const F64Type: Type = { kind: "primitive", name: "f64" };
 export const StringType: Type = { kind: "primitive", name: "string" };
 export const BoolType: Type = { kind: "primitive", name: "bool" };
 export const VoidType: Type = { kind: "primitive", name: "void" };
