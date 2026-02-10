@@ -10,6 +10,7 @@ export type Type =
     | { kind: "function", params: Type[], returnType: Type }
     | { kind: "result", ok: Type, err: Type }
     | { kind: "option", inner: Type }
+    | { kind: "tuple", elements: Type[] }
     | { kind: "generic_inst", name: string, args: Type[] } // Box<int>
     | { kind: "generic_param", name: string } // T
     | { kind: "enum", name: string, variants: EnumVariantInfo[] }
@@ -66,6 +67,10 @@ export function typesEqual(a: Type, b: Type): boolean {
     if (a.kind === "option" && b.kind === "option") {
         return typesEqual(a.inner, b.inner);
     }
+    if (a.kind === "tuple" && b.kind === "tuple") {
+        return a.elements.length === b.elements.length &&
+            a.elements.every((e, i) => typesEqual(e, b.elements[i]));
+    }
     return false;
 }
 
@@ -81,6 +86,7 @@ export function typeToString(t: Type): string {
     }
     if (t.kind === "result") return `Result<${typeToString(t.ok)}, ${typeToString(t.err)}>`;
     if (t.kind === "option") return `Option<${typeToString(t.inner)}>`;
+    if (t.kind === "tuple") return `(${t.elements.map(typeToString).join(", ")})`;
     if (t.kind === "function") return `(${t.params.map(typeToString).join(", ")}) -> ${typeToString(t.returnType)}`;
     if (t.kind === "unknown") return "?";
     return "complex";

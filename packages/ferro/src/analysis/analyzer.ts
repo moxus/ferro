@@ -101,6 +101,8 @@ export class Analyzer {
             this.loopDepth--;
         } else if (stmt instanceof AST.ForStatement) {
             this.visitForStatement(stmt);
+        } else if (stmt instanceof AST.ConstStatement) {
+            this.visitConstStatement(stmt);
         } else if (stmt instanceof AST.BreakStatement) {
             if (this.loopDepth === 0) {
                 this.error("`break` can only be used inside a loop", stmt.token);
@@ -235,6 +237,28 @@ export class Analyzer {
 
         // Define in scope
         this.scope.define(stmt.name.value, inferredType, stmt.mutable, stmt.token.line, this.currentModulePath);
+    }
+
+    private visitConstStatement(stmt: AST.ConstStatement) {
+        let inferredType: Type = UnknownType;
+        inferredType = this.visitExpression(stmt.value);
+
+        if (stmt.type) {
+            const declaredType = this.resolveType(stmt.type);
+            if (!typesEqual(declaredType, inferredType)) {
+                this.error(`Type mismatch in const: expected ${typeToString(declaredType)}, got ${typeToString(inferredType)}`, stmt.token);
+            }
+            inferredType = declaredType;
+        }
+
+        // Const values must be compile-time literals
+        if (!(stmt.value instanceof AST.IntegerLiteral || stmt.value instanceof AST.FloatLiteral ||
+              stmt.value instanceof AST.StringLiteral || stmt.value instanceof AST.BooleanLiteral ||
+              stmt.value instanceof AST.PrefixExpression || stmt.value instanceof AST.TupleLiteral)) {
+            this.error("const value must be a compile-time constant", stmt.token);
+        }
+
+        this.scope.define(stmt.name.value, inferredType, false, stmt.token.line, this.currentModulePath);
     }
 
     private visitBlockStatement(block: AST.BlockStatement) {
@@ -622,6 +646,10 @@ export class Analyzer {
                 // WildcardPattern or fallthrough: just visit body
                 this.visitStatement(arm.body);
             }
+
+            // --- Pattern Match Exhaustiveness Check ---
+            this.checkMatchExhaustiveness(matchedType, expr);
+
             return UnknownType;
         }
 
@@ -914,6 +942,19 @@ export class Analyzer {
                 return UnknownType;
             }
 
+            // String method return types
+            if (typesEqual(receiverType, StringType)) {
+                expr.arguments.forEach(a => this.visitExpression(a));
+                if (methodName === "len") return IntType;
+                if (methodName === "contains" || methodName === "starts_with" || methodName === "ends_with") return BoolType;
+                if (methodName === "trim" || methodName === "to_uppercase" || methodName === "to_lowercase" ||
+                    methodName === "slice" || methodName === "replace" || methodName === "repeat" ||
+                    methodName === "char_at" || methodName === "substr") return StringType;
+                if (methodName === "split") return { kind: "generic_inst", name: "Vec", args: [StringType] };
+                if (methodName === "index_of") return IntType;
+                if (methodName === "is_empty") return BoolType;
+            }
+
             // File method return types
             if (receiverType.kind === "primitive" && receiverType.name === "File") {
                 expr.arguments.forEach(a => this.visitExpression(a));
@@ -960,6 +1001,24 @@ export class Analyzer {
 
         if (expr instanceof AST.ClosureExpression) {
             return this.visitClosureExpression(expr);
+        }
+
+        if (expr instanceof AST.TupleLiteral) {
+            const elemTypes = expr.elements.map(e => this.visitExpression(e));
+            return { kind: "tuple", elements: elemTypes };
+        }
+
+        if (expr instanceof AST.TupleIndexExpression) {
+            const leftType = this.visitExpression(expr.left);
+            if (leftType.kind === "tuple") {
+                if (expr.index < 0 || expr.index >= leftType.elements.length) {
+                    this.error(`Tuple index ${expr.index} out of bounds (tuple has ${leftType.elements.length} elements)`, expr.token);
+                    return UnknownType;
+                }
+                return leftType.elements[expr.index];
+            }
+            this.error(`Cannot index non-tuple type with .${expr.index}`, expr.token);
+            return UnknownType;
         }
 
         if (expr instanceof AST.InterpolatedStringExpression) {
@@ -1110,6 +1169,12 @@ export class Analyzer {
         } else if (node instanceof AST.RangeExpression) {
             this.collectIdentifiers(node.start, result);
             this.collectIdentifiers(node.end, result);
+        } else if (node instanceof AST.TupleLiteral) {
+            node.elements.forEach(e => this.collectIdentifiers(e, result));
+        } else if (node instanceof AST.TupleIndexExpression) {
+            this.collectIdentifiers(node.left, result);
+        } else if (node instanceof AST.ConstStatement) {
+            this.collectIdentifiers(node.value, result);
         } else if (node instanceof AST.InterpolatedStringExpression) {
             for (const part of node.parts) {
                 if (!(part instanceof AST.StringLiteral)) {
@@ -1125,10 +1190,58 @@ export class Analyzer {
         for (const stmt of block.statements) {
             if (stmt instanceof AST.LetStatement) {
                 result.add(stmt.name.value);
+            } else if (stmt instanceof AST.ConstStatement) {
+                result.add(stmt.name.value);
             } else if (stmt instanceof AST.ForStatement) {
                 result.add(stmt.variable.value);
             }
         }
+    }
+
+    /** Check that a match expression covers all variants of an enum/Option/Result. */
+    private checkMatchExhaustiveness(matchedType: Type, expr: AST.MatchExpression) {
+        const hasWildcard = expr.arms.some(arm => arm.pattern instanceof AST.WildcardPattern);
+        if (hasWildcard) return; // Wildcard covers everything
+
+        if (matchedType.kind === "enum") {
+            const allVariants = new Set(matchedType.variants.map(v => v.name));
+            const coveredVariants = new Set<string>();
+            for (const arm of expr.arms) {
+                if (arm.pattern instanceof AST.EnumPattern) {
+                    coveredVariants.add(arm.pattern.variantName.value);
+                }
+            }
+            const missing: string[] = [];
+            for (const v of allVariants) {
+                if (!coveredVariants.has(v)) missing.push(v);
+            }
+            if (missing.length > 0) {
+                this.error(`Non-exhaustive match: missing variant(s) ${missing.map(v => `'${matchedType.name}::${v}'`).join(", ")}`, expr.token);
+            }
+        } else if (matchedType.kind === "result") {
+            const coveredOk = expr.arms.some(arm =>
+                arm.pattern instanceof AST.EnumPattern && arm.pattern.variantName.value === "Ok");
+            const coveredErr = expr.arms.some(arm =>
+                arm.pattern instanceof AST.EnumPattern && arm.pattern.variantName.value === "Err");
+            const missing: string[] = [];
+            if (!coveredOk) missing.push("'Result::Ok'");
+            if (!coveredErr) missing.push("'Result::Err'");
+            if (missing.length > 0) {
+                this.error(`Non-exhaustive match: missing variant(s) ${missing.join(", ")}`, expr.token);
+            }
+        } else if (matchedType.kind === "option") {
+            const coveredSome = expr.arms.some(arm =>
+                arm.pattern instanceof AST.EnumPattern && arm.pattern.variantName.value === "Some");
+            const coveredNone = expr.arms.some(arm =>
+                arm.pattern instanceof AST.EnumPattern && arm.pattern.variantName.value === "None");
+            const missing: string[] = [];
+            if (!coveredSome) missing.push("'Option::Some'");
+            if (!coveredNone) missing.push("'Option::None'");
+            if (missing.length > 0) {
+                this.error(`Non-exhaustive match: missing variant(s) ${missing.join(", ")}`, expr.token);
+            }
+        }
+        // For non-enum/result/option types (e.g., int, string), we can't check exhaustiveness
     }
 
     private resolveType(t: AST.Type): Type {
@@ -1142,6 +1255,12 @@ export class Analyzer {
         if (name === "any") return { kind: "primitive", name: "any" };
         if (t instanceof AST.PointerType) {
             return { kind: "pointer", elementType: this.resolveType(t.elementType) };
+        }
+        if (t instanceof AST.TupleType) {
+            return {
+                kind: "tuple",
+                elements: t.elements.map(e => this.resolveType(e)),
+            };
         }
         if (t instanceof AST.FunctionTypeNode) {
             return {
@@ -1224,6 +1343,9 @@ export class Analyzer {
                 this.typeToASTType(t.ok, refToken),
                 this.typeToASTType(t.err, refToken),
             ]);
+        }
+        if (t.kind === "tuple") {
+            return new AST.TupleType(synth, t.elements.map(e => this.typeToASTType(e, refToken)));
         }
         if (t.kind === "function") {
             const paramTypes = t.params.map(p => this.typeToASTType(p, refToken));

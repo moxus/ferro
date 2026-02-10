@@ -1285,3 +1285,76 @@ export class FunctionTypeNode implements Type {
     return `(${params}) -> ${this.returnType.toString()}`;
   }
 }
+
+// --- Tuple Nodes ---
+
+export class TupleType implements Type {
+  token: Token;
+  elements: Type[];
+
+  constructor(token: Token, elements: Type[]) {
+    this.token = token;
+    this.elements = elements;
+  }
+
+  typeNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `(${this.elements.map(t => t.toString()).join(", ")})`;
+  }
+}
+
+export class TupleLiteral implements Expression {
+  token: Token; // (
+  elements: Expression[];
+
+  constructor(token: Token, elements: Expression[]) {
+    this.token = token;
+    this.elements = elements;
+  }
+
+  expressionNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `(${this.elements.map(e => e.toString()).join(", ")})`;
+  }
+}
+
+export class TupleIndexExpression implements Expression {
+  token: Token; // .
+  left: Expression;
+  index: number;
+
+  constructor(token: Token, left: Expression, index: number) {
+    this.token = token;
+    this.left = left;
+    this.index = index;
+  }
+
+  expressionNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string { return `${this.left.toString()}.${this.index}`; }
+}
+
+// --- Const Declarations ---
+
+export class ConstStatement implements Statement {
+  token: Token; // const
+  name: Identifier;
+  type: Type | null;
+  value: Expression;
+
+  constructor(token: Token, name: Identifier, type: Type | null, value: Expression) {
+    this.token = token;
+    this.name = name;
+    this.type = type;
+    this.value = value;
+  }
+
+  statementNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    const typeStr = this.type ? `: ${this.type.toString()}` : "";
+    return `const ${this.name.toString()}${typeStr} = ${this.value.toString()};`;
+  }
+}

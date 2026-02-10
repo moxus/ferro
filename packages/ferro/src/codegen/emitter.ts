@@ -15,6 +15,9 @@ export class Emitter {
         if (node instanceof AST.Program) {
             return this.emitProgram(node);
         }
+        if (node instanceof AST.ConstStatement) {
+            return this.emitConstStatement(node);
+        }
         if (node instanceof AST.LetStatement) {
             return this.emitLetStatement(node);
         }
@@ -123,6 +126,22 @@ export class Emitter {
             if (method === "map_err" && node.arguments.length >= 1) return `_result_map_err(${obj}, ${this.emit(node.arguments[0])})`;
             if (method === "and_then" && node.arguments.length >= 1) return `_result_and_then(${obj}, ${this.emit(node.arguments[0])})`;
             if (method === "or_else" && node.arguments.length >= 1) return `_result_or_else(${obj}, ${this.emit(node.arguments[0])})`;
+            // String methods — dispatch to native JS string methods
+            if (method === "len" && node.arguments.length === 0) return `${obj}.length`;
+            if (method === "contains" && node.arguments.length === 1) return `${obj}.includes(${this.emit(node.arguments[0])})`;
+            if (method === "starts_with" && node.arguments.length === 1) return `${obj}.startsWith(${this.emit(node.arguments[0])})`;
+            if (method === "ends_with" && node.arguments.length === 1) return `${obj}.endsWith(${this.emit(node.arguments[0])})`;
+            if (method === "trim" && node.arguments.length === 0) return `${obj}.trim()`;
+            if (method === "to_uppercase" && node.arguments.length === 0) return `${obj}.toUpperCase()`;
+            if (method === "to_lowercase" && node.arguments.length === 0) return `${obj}.toLowerCase()`;
+            if (method === "replace" && node.arguments.length === 2) return `${obj}.replace(${this.emit(node.arguments[0])}, ${this.emit(node.arguments[1])})`;
+            if (method === "split" && node.arguments.length === 1) return `${obj}.split(${this.emit(node.arguments[0])})`;
+            if (method === "repeat" && node.arguments.length === 1) return `${obj}.repeat(${this.emit(node.arguments[0])})`;
+            if (method === "char_at" && node.arguments.length === 1) return `${obj}.charAt(${this.emit(node.arguments[0])})`;
+            if (method === "index_of" && node.arguments.length === 1) return `${obj}.indexOf(${this.emit(node.arguments[0])})`;
+            if (method === "is_empty" && node.arguments.length === 0) return `(${obj}.length === 0)`;
+            if (method === "slice" && node.arguments.length === 2) return `${obj}.slice(${this.emit(node.arguments[0])}, ${this.emit(node.arguments[1])})`;
+            if (method === "substr" && node.arguments.length === 2) return `${obj}.substring(${this.emit(node.arguments[0])}, ${this.emit(node.arguments[1])})`;
             // collect() is identity for TS arrays (map/filter already return arrays eagerly)
             if (method === "collect") return obj;
             // iter() is identity for TS arrays (JS arrays are already iterable)
@@ -176,6 +195,12 @@ export class Emitter {
         }
         if (node instanceof AST.ClosureExpression) {
             return this.emitClosureExpression(node);
+        }
+        if (node instanceof AST.TupleLiteral) {
+            return `[${node.elements.map(e => this.emit(e)).join(", ")}]`;
+        }
+        if (node instanceof AST.TupleIndexExpression) {
+            return `${this.emit(node.left)}[${node.index}]`;
         }
 
         return "";
@@ -289,7 +314,7 @@ function print(...args: any[]) { console.log(...args); }
     private emitLetStatement(stmt: AST.LetStatement): string {
         const keyword = stmt.mutable ? "let" : "const";
         const value = stmt.value ? this.emit(stmt.value) : "undefined";
-        const typeAnn = stmt.type ? `: ${stmt.type.toString()}` : "";
+        const typeAnn = stmt.type ? `: ${this.mapTSType(stmt.type)}` : "";
         // Track HashMap variables for iteration semantics
         if (stmt.value instanceof AST.StaticCallExpression) {
             const sc = stmt.value as AST.StaticCallExpression;
@@ -328,6 +353,12 @@ function print(...args: any[]) { console.log(...args); }
             this.optionVars.add(stmt.name.value);
         }
         return `${keyword} ${stmt.name.value}${typeAnn} = ${value};`;
+    }
+
+    private emitConstStatement(stmt: AST.ConstStatement): string {
+        const typeAnn = stmt.type ? `: ${this.mapTSType(stmt.type)}` : "";
+        const value = this.emit(stmt.value);
+        return `const ${stmt.name.value}${typeAnn} = ${value};`;
     }
 
     private emitReturnStatement(stmt: AST.ReturnStatement): string {
@@ -436,6 +467,9 @@ function print(...args: any[]) { console.log(...args); }
                 return `${mapped}<${args}>`;
             }
             return mapped;
+        }
+        if (type instanceof AST.TupleType) {
+            return `[${type.elements.map(t => this.mapTSType(t)).join(", ")}]`;
         }
         if (type instanceof AST.PointerType) {
             return "any";

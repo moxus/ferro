@@ -35,8 +35,8 @@ describe("TypeScript Codegen", () => {
             `;
             const ts = parseAndEmit(input);
             // Both declarations should be emitted
-            expect(ts).toContain("const a: int = 10");
-            expect(ts).toContain("const a: int = 20");
+            expect(ts).toContain("const a: number = 10");
+            expect(ts).toContain("const a: number = 20");
         });
 
         it("should handle shadowed variables in if/else branches", () => {
@@ -51,8 +51,8 @@ describe("TypeScript Codegen", () => {
                 }
             `;
             const ts = parseAndEmit(input);
-            expect(ts).toContain("const x: int = 100");
-            expect(ts).toContain("const x: int = 200");
+            expect(ts).toContain("const x: number = 100");
+            expect(ts).toContain("const x: number = 200");
         });
     });
 
