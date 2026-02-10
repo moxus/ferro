@@ -30,6 +30,7 @@ export enum TokenType {
   Pub = "PUB",
   Extern = "EXTERN",
   Unsafe = "UNSAFE",
+  Const = "CONST",
 
   // Literals
   Identifier = "IDENTIFIER",
@@ -112,6 +113,7 @@ export const Keywords: Record<string, TokenType> = {
   pub: TokenType.Pub,
   extern: TokenType.Extern,
   unsafe: TokenType.Unsafe,
+  const: TokenType.Const,
 };
 
 export function lookupIdent(ident: string): TokenType {

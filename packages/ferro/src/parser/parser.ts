@@ -173,6 +173,8 @@ export class Parser {
         return this.parseBreakStatement();
       case TokenType.Continue:
         return this.parseContinueStatement();
+      case TokenType.Const:
+        return this.parseConstStatement();
       case TokenType.Struct:
         return this.parseStructDefinition();
       case TokenType.Enum:
@@ -591,6 +593,32 @@ export class Parser {
     return stmt;
   }
 
+  private parseConstStatement(): AST.ConstStatement | null {
+    const token = this.curToken; // const
+
+    if (!this.expectPeek(TokenType.Identifier)) return null;
+    const name = new AST.Identifier(this.curToken, this.curToken.literal);
+
+    let type: AST.Type | null = null;
+    if (this.peekTokenIs(TokenType.Colon)) {
+      this.nextToken(); // consume identifier
+      this.nextToken(); // consume :, move to type
+      type = this.parseType();
+    }
+
+    if (!this.expectPeek(TokenType.Equals)) return null;
+
+    this.nextToken();
+    const value = this.parseExpression(Precedence.LOWEST);
+    if (!value) return null;
+
+    if (this.peekTokenIs(TokenType.Semi)) {
+      this.nextToken();
+    }
+
+    return new AST.ConstStatement(token, name, type, value);
+  }
+
   private parseReturnStatement(): AST.ReturnStatement | null {
     const token = this.curToken;
     this.nextToken();
@@ -778,9 +806,24 @@ export class Parser {
       return this.parseClosureWithTypedParams(openToken);
     }
 
-    // Regular grouped expression: (expr)
+    // Regular grouped expression or tuple literal: (expr) or (expr, expr, ...)
     this.nextToken();
     const exp = this.parseExpression(Precedence.LOWEST);
+    if (!exp) return null;
+
+    // If we see a comma, it's a tuple literal
+    if (this.peekTokenIs(TokenType.Comma)) {
+      const elements: AST.Expression[] = [exp];
+      while (this.peekTokenIs(TokenType.Comma)) {
+        this.nextToken(); // consume comma
+        this.nextToken(); // move to next expression
+        const elem = this.parseExpression(Precedence.LOWEST);
+        if (elem) elements.push(elem);
+      }
+      if (!this.expectPeek(TokenType.RPharen)) return null;
+      return new AST.TupleLiteral(openToken, elements);
+    }
+
     if (!this.expectPeek(TokenType.RPharen)) {
       return null;
     }
@@ -1159,18 +1202,19 @@ export class Parser {
     }
 
     // Function type: (paramType, ...) -> returnType
+    // Tuple type: (Type, Type, ...)
     if (token.type === TokenType.LPharen) {
-      const paramTypes: AST.Type[] = [];
+      const types: AST.Type[] = [];
 
       this.nextToken(); // consume (
 
-      // Parse parameter types (may be empty)
+      // Parse types (may be empty)
       if (!this.curTokenIs(TokenType.RPharen)) {
-        paramTypes.push(this.parseType());
+        types.push(this.parseType());
         while (this.peekTokenIs(TokenType.Comma)) {
           this.nextToken(); // consume comma
           this.nextToken(); // move to next type
-          paramTypes.push(this.parseType());
+          types.push(this.parseType());
         }
         if (!this.expectPeek(TokenType.RPharen)) {
           return new AST.TypeIdentifier(token, "unknown");
@@ -1178,14 +1222,23 @@ export class Parser {
       }
       // curToken is now )
 
-      if (!this.expectPeek(TokenType.Arrow)) {
-        return new AST.TypeIdentifier(token, "unknown");
+      // If followed by ->, it's a function type
+      if (this.peekTokenIs(TokenType.Arrow)) {
+        this.nextToken(); // consume ->
+        this.nextToken(); // move to return type
+        const returnType = this.parseType();
+        return new AST.FunctionTypeNode(token, types, returnType);
       }
-      // curToken is now ->
 
-      this.nextToken(); // move to return type
-      const returnType = this.parseType();
-      return new AST.FunctionTypeNode(token, paramTypes, returnType);
+      // Otherwise it's a tuple type (requires 2+ elements)
+      if (types.length >= 2) {
+        return new AST.TupleType(token, types);
+      }
+
+      // Single type in parens — just return the inner type
+      if (types.length === 1) return types[0];
+
+      return new AST.TypeIdentifier(token, "unknown");
     }
 
     // For now, simple type identifiers like `int`, `string`, `Result<T>`
@@ -1369,6 +1422,12 @@ export class Parser {
 
   private parseMemberAccess(left: AST.Expression): AST.Expression | null {
     const token = this.curToken;
+    // Tuple index access: expr.0, expr.1, etc.
+    if (this.peekTokenIs(TokenType.Number)) {
+      this.nextToken();
+      const index = parseInt(this.curToken.literal, 10);
+      return new AST.TupleIndexExpression(token, left, index);
+    }
     if (!this.expectPeek(TokenType.Identifier)) return null;
     const member = new AST.Identifier(this.curToken, this.curToken.literal);
     return new AST.MemberAccessExpression(token, left, member);

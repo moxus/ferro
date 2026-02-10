@@ -435,6 +435,9 @@ export class LLVMEmitter {
             if (t.kind === "primitive") typeName = t.name;
             else if (t.kind === "pointer") return `${this.mapType(t.elementType)}*`;
             else if (t.kind === "function") return "{ i8*, i8* }";
+            else if (t.kind === "tuple") return `{ ${t.elements.map(e => this.mapType(e)).join(", ")} }`;
+        } else if (type instanceof AST.TupleType) {
+            return `{ ${type.elements.map(e => this.mapType(e)).join(", ")} }`;
         } else if (type instanceof AST.FunctionTypeNode) {
             return "{ i8*, i8* }";
         } else if ('value' in type) {
@@ -1119,7 +1122,7 @@ export class LLVMEmitter {
             if (stmt instanceof AST.StructDefinition || stmt instanceof AST.EnumDefinition || stmt instanceof AST.FunctionLiteral || stmt instanceof AST.ImportStatement || stmt instanceof AST.ExternStatement || stmt instanceof AST.TraitDeclaration || stmt instanceof AST.ImplBlock) return;
             if (stmt instanceof AST.ExpressionStatement && stmt.expression instanceof AST.FunctionLiteral) return;
             if (stmt instanceof AST.ExportStatement) {
-                if (stmt.statement instanceof AST.LetStatement || stmt.statement instanceof AST.ExpressionStatement) this.emitStatement(stmt.statement);
+                if (stmt.statement instanceof AST.LetStatement || stmt.statement instanceof AST.ConstStatement || stmt.statement instanceof AST.ExpressionStatement) this.emitStatement(stmt.statement);
                 return;
             }
             this.emitStatement(stmt);
@@ -1138,6 +1141,15 @@ export class LLVMEmitter {
             if (stmt.value instanceof AST.StructLiteral) {
                 const structAddr = this.emitExpression(stmt.value);
                 this.locals.set(stmt.name.value, structAddr);
+                this.localTypes.set(stmt.name.value, type);
+                this.localIsPtr.add(stmt.name.value);
+                return;
+            }
+
+            // Tuple literals: store as pointer-semantic (like structs)
+            if (stmt.value instanceof AST.TupleLiteral) {
+                const tupleAddr = this.emitExpression(stmt.value);
+                this.locals.set(stmt.name.value, tupleAddr);
                 this.localTypes.set(stmt.name.value, type);
                 this.localIsPtr.add(stmt.name.value);
                 return;
@@ -1284,6 +1296,18 @@ export class LLVMEmitter {
                 const deadLabel = `continue_dead_${this.labelCounter++}`;
                 this.output += `${deadLabel}:\n`;
             }
+        } else if (stmt instanceof AST.ConstStatement) {
+            // Emit like a let statement (immutable)
+            let type = "i32";
+            if (stmt.type) type = this.mapType(stmt.type);
+            else type = this.getExpressionType(stmt.value);
+
+            const valReg = this.emitExpression(stmt.value);
+            const varReg = this.uniqueVarAddr(stmt.name.value);
+            this.output += `  ${varReg} = alloca ${type}\n`;
+            this.output += `  store ${type} ${valReg}, ${type}* ${varReg}\n`;
+            this.locals.set(stmt.name.value, varReg);
+            this.localTypes.set(stmt.name.value, type);
         } else if (stmt instanceof AST.BlockStatement) {
             stmt.statements.forEach(s => this.emitStatement(s));
         }
@@ -1519,6 +1543,15 @@ export class LLVMEmitter {
         if (expr instanceof AST.NullLiteral) return "i8*";
         if (expr instanceof AST.StringLiteral) return this.runtimeStringType || "%String";
         if (expr instanceof AST.InterpolatedStringExpression) return this.runtimeStringType || "%String";
+        if (expr instanceof AST.TupleLiteral) {
+            const elemTypes = expr.elements.map(e => this.getExpressionType(e));
+            return `{ ${elemTypes.join(", ")} }`;
+        }
+        if (expr instanceof AST.TupleIndexExpression) {
+            const tupleType = this.getExpressionType(expr.left);
+            const elemTypes = this.parseTupleType(tupleType);
+            return elemTypes[expr.index] || "i32";
+        }
         if (expr instanceof AST.StructLiteral) {
             const sym = this.currentScope?.resolve(expr.name.value);
             let mangledName = this.getMangledName(expr.name.value, this.currentModulePath);
@@ -1699,6 +1732,8 @@ export class LLVMEmitter {
         if (expr instanceof AST.StringLiteral) return this.emitStringLiteral(expr);
         if (expr instanceof AST.InterpolatedStringExpression) return this.emitInterpolatedString(expr);
         if (expr instanceof AST.StructLiteral) return this.emitStructLiteral(expr);
+        if (expr instanceof AST.TupleLiteral) return this.emitTupleLiteral(expr);
+        if (expr instanceof AST.TupleIndexExpression) return this.emitTupleIndex(expr);
         if (expr instanceof AST.CastExpression) return this.emitCastExpression(expr);
         if (expr instanceof AST.AddressOfExpression) return this.emitAddressOfExpression(expr);
         if (expr instanceof AST.MemberAccessExpression) return this.emitMemberAccess(expr);
@@ -1936,6 +1971,44 @@ export class LLVMEmitter {
             this.output += `  store ${valType} ${valReg}, ${valType}* ${fieldPtr}\n`;
         });
         return resAddr;
+    }
+
+    private emitTupleLiteral(expr: AST.TupleLiteral): string {
+        const elemTypes = expr.elements.map(e => this.getExpressionType(e));
+        const llvmType = `{ ${elemTypes.join(", ")} }`;
+
+        const resAddr = this.nextRegister();
+        this.output += `  ${resAddr} = alloca ${llvmType}\n`;
+
+        expr.elements.forEach((elem, i) => {
+            const valReg = this.emitExpression(elem);
+            const fieldPtr = this.nextRegister();
+            this.output += `  ${fieldPtr} = getelementptr inbounds ${llvmType}, ${llvmType}* ${resAddr}, i32 0, i32 ${i}\n`;
+            this.output += `  store ${elemTypes[i]} ${valReg}, ${elemTypes[i]}* ${fieldPtr}\n`;
+        });
+        return resAddr;
+    }
+
+    private emitTupleIndex(expr: AST.TupleIndexExpression): string {
+        const tupleAddr = this.emitExpression(expr.left);
+        const tupleType = this.getExpressionType(expr.left);
+
+        // Parse the tuple LLVM type to get element types
+        const elemTypes = this.parseTupleType(tupleType);
+        const elemType = elemTypes[expr.index] || "i32";
+
+        const fieldPtr = this.nextRegister();
+        this.output += `  ${fieldPtr} = getelementptr inbounds ${tupleType}, ${tupleType}* ${tupleAddr}, i32 0, i32 ${expr.index}\n`;
+        const reg = this.nextRegister();
+        this.output += `  ${reg} = load ${elemType}, ${elemType}* ${fieldPtr}\n`;
+        return reg;
+    }
+
+    private parseTupleType(llvmType: string): string[] {
+        // Parse "{ i32, double, i1 }" into ["i32", "double", "i1"]
+        const inner = llvmType.slice(2, -2).trim(); // remove "{ " and " }"
+        if (!inner) return [];
+        return inner.split(",").map(s => s.trim());
     }
 
     private emitMemberAccess(expr: AST.MemberAccessExpression): string {
@@ -3396,6 +3469,11 @@ export class LLVMEmitter {
             return this.emitFileMethodCall(expr, selfType);
         }
 
+        // String method calls
+        if (selfType === (this.runtimeStringType || "%String")) {
+            return this.emitStringMethodCall(expr);
+        }
+
         // General trait-based method dispatch
         let targetTypeName = selfType;
         if (targetTypeName.startsWith("%struct.")) targetTypeName = targetTypeName.replace("%struct.", "");
@@ -3433,6 +3511,94 @@ export class LLVMEmitter {
         // Delegate to emitTraitMethodCall with self prepended as first arg
         const allArgs: AST.Expression[] = [expr.object, ...expr.arguments];
         return this.emitTraitMethodCall(foundTraitName, methodName, allArgs);
+    }
+
+    private emitStringMethodCall(expr: AST.MethodCallExpression): string {
+        const strType = this.getStringType();
+        const methodName = expr.method.value;
+
+        // Get pointer to the String struct
+        let selfPtr: string;
+        if (expr.object instanceof AST.Identifier) {
+            const addr = this.locals.get(expr.object.value);
+            if (addr && this.localIsPtr.has(expr.object.value)) {
+                selfPtr = addr;
+            } else if (addr) {
+                selfPtr = addr; // alloca address is already a pointer
+            } else {
+                selfPtr = this.emitExpression(expr.object);
+                const tmpPtr = this.nextRegister();
+                this.output += `  ${tmpPtr} = alloca ${strType}\n`;
+                this.output += `  store ${strType} ${selfPtr}, ${strType}* ${tmpPtr}\n`;
+                selfPtr = tmpPtr;
+            }
+        } else {
+            const val = this.emitExpression(expr.object);
+            const tmpPtr = this.nextRegister();
+            this.output += `  ${tmpPtr} = alloca ${strType}\n`;
+            this.output += `  store ${strType} ${val}, ${strType}* ${tmpPtr}\n`;
+            selfPtr = tmpPtr;
+        }
+
+        if (methodName === "len") {
+            this.ensureExternDeclared("fs_string_len", `declare i32 @fs_string_len(${strType}*)`);
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i32 @fs_string_len(${strType}* ${selfPtr})\n`;
+            return reg;
+        }
+
+        if (methodName === "slice" && expr.arguments.length === 2) {
+            this.ensureExternDeclared("fs_string_slice", `declare ${strType} @fs_string_slice(${strType}*, i32, i32)`);
+            const startReg = this.emitExpression(expr.arguments[0]);
+            const endReg = this.emitExpression(expr.arguments[1]);
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call ${strType} @fs_string_slice(${strType}* ${selfPtr}, i32 ${startReg}, i32 ${endReg})\n`;
+            return reg;
+        }
+
+        if (methodName === "index_of" && expr.arguments.length === 1) {
+            this.ensureExternDeclared("fs_string_index", `declare i32 @fs_string_index(${strType}*, ${strType}*)`);
+            const argVal = this.emitExpression(expr.arguments[0]);
+            const argPtr = this.nextRegister();
+            this.output += `  ${argPtr} = alloca ${strType}\n`;
+            this.output += `  store ${strType} ${argVal}, ${strType}* ${argPtr}\n`;
+            const reg = this.nextRegister();
+            this.output += `  ${reg} = call i32 @fs_string_index(${strType}* ${selfPtr}, ${strType}* ${argPtr})\n`;
+            return reg;
+        }
+
+        if (methodName === "contains" && expr.arguments.length === 1) {
+            // contains = index_of >= 0
+            this.ensureExternDeclared("fs_string_index", `declare i32 @fs_string_index(${strType}*, ${strType}*)`);
+            const argVal = this.emitExpression(expr.arguments[0]);
+            const argPtr = this.nextRegister();
+            this.output += `  ${argPtr} = alloca ${strType}\n`;
+            this.output += `  store ${strType} ${argVal}, ${strType}* ${argPtr}\n`;
+            const idxReg = this.nextRegister();
+            this.output += `  ${idxReg} = call i32 @fs_string_index(${strType}* ${selfPtr}, ${strType}* ${argPtr})\n`;
+            const cmpReg = this.nextRegister();
+            this.output += `  ${cmpReg} = icmp sge i32 ${idxReg}, 0\n`;
+            return cmpReg;
+        }
+
+        if (methodName === "is_empty") {
+            this.ensureExternDeclared("fs_string_len", `declare i32 @fs_string_len(${strType}*)`);
+            const lenReg = this.nextRegister();
+            this.output += `  ${lenReg} = call i32 @fs_string_len(${strType}* ${selfPtr})\n`;
+            const cmpReg = this.nextRegister();
+            this.output += `  ${cmpReg} = icmp eq i32 ${lenReg}, 0\n`;
+            return cmpReg;
+        }
+
+        // Fallback for methods not yet supported in native backend
+        return "0";
+    }
+
+    private ensureExternDeclared(name: string, decl: string) {
+        if (!this.declaredExterns.has(name)) {
+            this.declaredExterns.add(name);
+            this.header += decl + "\n";
+        }
     }
 
     private getVecVarName(expr: AST.Expression): string {

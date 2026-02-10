@@ -1,6 +1,6 @@
 # Ferro Status Log
 
-**Date:** February 9, 2026
+**Date:** February 10, 2026
 **Project Name:** Ferro (Rusty addon for JS/TS with Native LLVM support)
 
 ---
@@ -372,6 +372,38 @@
 
 ---
 
+### 39. Tuple Types
+- [x] **AST Nodes**: `TupleLiteral` (expression), `TupleType` (type annotation), `TupleIndexExpression` (positional access).
+- [x] **Parser**: `(expr, expr, ...)` parsed as tuple literals (disambiguated from grouped expressions by comma). `(Type, Type)` parsed as tuple types (disambiguated from function types by absence of `->`). `.0`, `.1` parsed as tuple index access (Dot + Number token).
+- [x] **Type System**: `{ kind: "tuple", elements: Type[] }` type kind with `typesEqual` and `typeToString` support.
+- [x] **Analyzer**: Tuple literals infer element types. Tuple index access validates bounds and returns the element type. `resolveType` and `typeToASTType` handle `TupleType`.
+- [x] **TypeScript Backend**: Tuples emit as arrays (`[a, b, c]`), index access as `t[0]`, type annotations as `[number, string]`.
+- [x] **LLVM Backend**: Tuples emit as anonymous structs (`{ i32, double }`), stored pointer-semantic. Index access via `getelementptr` + `load`.
+
+### 40. String Methods
+- [x] **Analyzer**: String method return types — `.len()` → `int`, `.contains()` / `.starts_with()` / `.ends_with()` / `.is_empty()` → `bool`, `.trim()` / `.to_uppercase()` / `.to_lowercase()` / `.slice()` / `.replace()` / `.repeat()` / `.char_at()` / `.substr()` → `string`, `.split()` → `Vec<string>`, `.index_of()` → `int`.
+- [x] **TypeScript Backend**: Maps to native JS string methods — `.len()` → `.length`, `.contains()` → `.includes()`, `.starts_with()` → `.startsWith()`, `.ends_with()` → `.endsWith()`, `.to_uppercase()` → `.toUpperCase()`, `.to_lowercase()` → `.toLowerCase()`, `.is_empty()` → `(.length === 0)`, etc.
+- [x] **LLVM Backend**: `.len()` → `fs_string_len`, `.slice()` → `fs_string_slice`, `.index_of()` → `fs_string_index`, `.contains()` → `fs_string_index >= 0`, `.is_empty()` → `fs_string_len == 0`.
+
+### 41. Pattern Match Exhaustiveness
+- [x] **Exhaustiveness Checking**: After visiting a `match` expression, the analyzer checks that all variants are covered for enum, `Option`, and `Result` types.
+- [x] **Enum Variants**: Collects all variant names from the matched enum type and reports missing variants.
+- [x] **`Option<T>`**: Checks for `Some` and `None` coverage.
+- [x] **`Result<T, E>`**: Checks for `Ok` and `Err` coverage.
+- [x] **Wildcard Suppression**: Wildcard `_` arm suppresses exhaustiveness warnings (covers all remaining cases).
+- [x] **Error Messages**: Reports all missing variant names in a single diagnostic, e.g., `Non-exhaustive match: missing variant(s) 'Color::Green', 'Color::Blue'`.
+
+### 42. `const` Declarations
+- [x] **Token**: `Const` keyword added to lexer.
+- [x] **AST Node**: `ConstStatement` with name, optional type, and value expression.
+- [x] **Parser**: `const NAME: Type = value;` syntax with optional type annotation.
+- [x] **Analyzer**: Defines const in scope as immutable. Type-checks declared type vs inferred type. Validates that the value is a compile-time constant (literal or unary prefix on literal).
+- [x] **TypeScript Backend**: Emits `const NAME: MappedType = value;`.
+- [x] **LLVM Backend**: Emits as alloca + store (same as immutable `let`).
+- [x] **Test Coverage**: 50 new tests in `tier2.test.ts` covering parsing, analysis, and codegen for all 4 features.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -380,17 +412,17 @@
 
 ## 🛠 Planned Features
 
-### Tier 1 — High Impact (Next Up)
+### Tier 1 — High Impact
 - ~~**Floating-Point Type (`f64`)**~~: **Completed (see §3 Syntax Features)**
 - ~~**`break` / `continue`**~~: **Completed (see §35)**
 - ~~**Inherent `impl` Blocks**~~: **Completed (see §36)**
 - ~~**`Option<T>` Built-in**~~: **Completed (see §37)**
 
 ### Tier 2 — Expressiveness
-- **Tuple Types**: `(int, string)` with positional access (`.0`, `.1`), destructuring, struct-based LLVM representation.
-- **String Methods**: `s.len()`, `s.contains("x")`, `s.starts_with("h")`, `s.trim()`, `s.to_uppercase()` — method syntax on strings via inherent impls.
-- **Pattern Match Exhaustiveness**: Compiler warns when `match` is missing cases for enum variants.
-- **`const` Declarations**: Compile-time constants (`const PI: f64 = 3.14159`).
+- ~~**Tuple Types**~~: **Completed (see §39)**
+- ~~**String Methods**~~: **Completed (see §40)**
+- ~~**Pattern Match Exhaustiveness**~~: **Completed (see §41)**
+- ~~**`const` Declarations**~~: **Completed (see §42)**
 
 ### Tier 3 — Ecosystem & Polish
 - ~~**Full `Result<T, E>` Support**~~: **Completed (see §34 Higher-Level Error Handling)**
