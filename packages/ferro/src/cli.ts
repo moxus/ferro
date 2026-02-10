@@ -7,19 +7,34 @@ import { LLVMEmitter } from "./codegen/llvm_emitter";
 import { ModuleLoader } from "./analysis/module_loader";
 import { ParseError, formatError } from "./errors";
 
-function main() {
-    const args = process.argv.slice(2);
-    if (args.length < 1) {
-        console.error("Usage: ferro <file.fe> [--native]");
-        process.exit(1);
-    }
+const VERSION = "1.0.0";
 
+function printUsage() {
+    console.log(`ferro ${VERSION} — a Rust-inspired language for the JS/TS ecosystem
+
+USAGE:
+    ferro build <file.fe> [options]
+
+COMMANDS:
+    build       Compile a .fe source file
+    help        Show this help message
+    version     Print version
+
+OPTIONS:
+    --native    Compile to a native binary via LLVM (default: transpile to TypeScript)
+
+EXAMPLES:
+    ferro build hello.fe
+    ferro build hello.fe --native`);
+}
+
+function build(args: string[]) {
     const isNative = args.includes("--native");
-    // Filter out flags to find filename
     const filename = args.find(arg => !arg.startsWith("--"));
 
     if (!filename) {
-        console.error("No input file specified.");
+        console.error("error: no input file specified\n");
+        console.error("Usage: ferro build <file.fe> [--native]");
         process.exit(1);
     }
 
@@ -101,6 +116,40 @@ function main() {
         }
         console.error(`\x1b[1m\x1b[31merror\x1b[0m\x1b[1m: ${e.message || e}\x1b[0m`);
         process.exit(1);
+    }
+}
+
+function main() {
+    const args = process.argv.slice(2);
+    const command = args[0];
+
+    switch (command) {
+        case "build":
+            build(args.slice(1));
+            break;
+        case "version":
+        case "--version":
+        case "-v":
+            console.log(`ferro ${VERSION}`);
+            break;
+        case "help":
+        case "--help":
+        case "-h":
+            printUsage();
+            break;
+        case undefined:
+            printUsage();
+            break;
+        default:
+            // If the first arg looks like a file, treat it as an implicit build for backward compat
+            if (command.endsWith(".fe")) {
+                build(args);
+            } else {
+                console.error(`error: unknown command '${command}'\n`);
+                printUsage();
+                process.exit(1);
+            }
+            break;
     }
 }
 

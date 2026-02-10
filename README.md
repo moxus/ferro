@@ -25,13 +25,25 @@ Ferro is a Rust-inspired programming language for the JavaScript/TypeScript ecos
 - **Node.js** (v18+) and npm
 - **LLVM/Clang** (only required for native compilation with `--native`)
 
-### Installation
+### Install
 
 ```bash
 git clone <repo-url>
-cd rustscript
+cd ferro
 npm install
 npm run build
+
+# Make the `ferro` command available globally
+cd packages/ferro
+npm link
+```
+
+After `npm link`, the `ferro` command is available anywhere on your system. To uninstall later, run `npm unlink -g ferro`.
+
+You can also use it without linking via `npx`:
+
+```bash
+npx ferro build hello.fe
 ```
 
 ### Your First Program
@@ -44,14 +56,14 @@ fn main() {
 }
 ```
 
-Run it:
+Compile it:
 
 ```bash
 # Transpile to TypeScript
-node packages/ferro/dist/cli.js hello.fe
+ferro build hello.fe
 
 # Or compile to a native binary
-node packages/ferro/dist/cli.js hello.fe --native
+ferro build hello.fe --native
 ./hello
 ```
 
@@ -614,7 +626,7 @@ log!("debug message");
 ### TypeScript (default)
 
 ```bash
-node packages/ferro/dist/cli.js source.fe
+ferro build source.fe
 ```
 
 Produces `source.ts` with a minimal runtime preamble. Run it with any TypeScript/Node.js toolchain.
@@ -622,7 +634,7 @@ Produces `source.ts` with a minimal runtime preamble. Run it with any TypeScript
 ### Native Binary (LLVM)
 
 ```bash
-node packages/ferro/dist/cli.js source.fe --native
+ferro build source.fe --native
 ```
 
 Produces `source.ll` (LLVM IR) and a native executable. Requires `clang` on your PATH. The self-hosted Ferro runtime is automatically linked &mdash; no C dependencies.
@@ -653,10 +665,10 @@ npm run build
 cd packages/ferro && npx vitest run
 
 # Transpile a file
-node packages/ferro/dist/cli.js example.fe
+ferro build example.fe
 
 # Compile to native
-node packages/ferro/dist/cli.js example.fe --native
+ferro build example.fe --native
 ```
 
 ---

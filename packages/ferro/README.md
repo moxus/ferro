@@ -8,11 +8,25 @@ Ferro is a rusty script for the JavaScript ecosystem. It brings Rust's safety gu
 - **Expressions**: `if`, `block`, and `match` (planned) are expressions.
 - **Transpilation**: Compiles to clean, readable TypeScript.
 
+## Install
+
+```bash
+npm install
+npm run build
+
+# Make the `ferro` command available globally
+npm link
+```
+
+After linking, `ferro` is available as a CLI command. To uninstall: `npm unlink -g ferro`.
+
 ## Usage
 
 ```bash
-# Compile a file
-./dist/cli.js source.fe
+ferro build source.fe              # transpile to TypeScript
+ferro build source.fe --native     # compile to native binary via LLVM
+ferro help                         # show help
+ferro version                      # print version
 ```
 
 ## Example
