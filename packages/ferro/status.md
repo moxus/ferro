@@ -404,6 +404,63 @@
 
 ---
 
+### 43. Type Aliases
+- [x] **`type Name = SomeType` Syntax**: Rust-style type alias declarations.
+- [x] **Token**: `TypeKeyword` added to lexer (`type` keyword).
+- [x] **AST Node**: `TypeAliasStatement` with name and type value.
+- [x] **Parser**: `parseTypeAliasStatement()` — supports simple types, tuple types, function types, and generic types.
+- [x] **Analyzer**: Type aliases stored in `typeAliases` map. `resolveType()` checks aliases before other resolution. Aliases work in variable declarations and function parameters.
+- [x] **TypeScript Backend**: Emits native TS `type Name = MappedType;` declarations.
+- [x] **LLVM Backend**: Aliases resolved transparently through `typeAliasMap` — no IR emitted, substituted during type mapping.
+- [x] **Test Coverage**: 10 tests covering parsing (simple, tuple, function, generic), analysis, and codegen.
+
+### 44. Array Types (Fixed-Size)
+- [x] **`[Type; N]` Type Syntax**: Fixed-size array type annotation (e.g., `let arr: [int; 5]`).
+- [x] **`[value; N]` Repeat Expression**: Array initialization with repeated values (e.g., `[0; 10]`).
+- [x] **AST Nodes**: `ArrayType` (type annotation with element type and size), `ArrayRepeatExpression` (expression with value and count).
+- [x] **Parser**: Array type parsed in `parseType()` when `[` is followed by `Type ; Number ]`. Array repeat parsed in `parseArrayLiteral()` when first expression is followed by `;`.
+- [x] **Type System**: `{ kind: "array", elementType: Type, size: number }` with `typesEqual` and `typeToString` support.
+- [x] **Analyzer**: `ArrayRepeatExpression` infers element type from value expression.
+- [x] **TypeScript Backend**: `[value; N]` emits `Array(N).fill(value)`. `[int; 5]` type emits `number[]`.
+- [x] **LLVM Backend**: `[value; N]` emits `alloca [N x T]` + N `getelementptr`/`store` instructions. Type maps to `[N x T]`.
+- [x] **Test Coverage**: 7 tests covering parsing, analysis, and codegen.
+
+### 45. Async/Await
+- [x] **`async fn` Syntax**: Async function declarations (e.g., `async fn fetch() -> string { ... }`).
+- [x] **`await expr` Syntax**: Prefix await expression (e.g., `let x = await get_data();`).
+- [x] **`.await` Syntax**: Rust-style postfix await (e.g., `let x = get_data().await;`).
+- [x] **Token Types**: `Async` and `Await` keywords added to lexer.
+- [x] **AST Node**: `AwaitExpression` for both prefix and postfix forms. `FunctionLiteral.isAsync` flag for async functions.
+- [x] **Parser**: `async fn` parsed via `parseAsyncExpression()`. `await expr` parsed as prefix. `.await` parsed in `parseMemberAccess()`.
+- [x] **Type System**: `{ kind: "promise", inner: Type }` with `typesEqual` and `typeToString` support.
+- [x] **Analyzer**: `insideAsyncFn` tracking — `await` outside async functions produces an error. Async functions return `Promise<T>`. `await` on `Promise<T>` yields `T`.
+- [x] **TypeScript Backend**: `async fn` emits `async function`. `await expr` emits `await expr`.
+- [x] **LLVM Backend**: Async not supported natively — functions emit normally, `await` emits inner expression.
+- [x] **Test Coverage**: 7 tests covering parsing, analysis (error detection), and codegen.
+
+### 46. Cycle Detection (Weak References)
+- [x] **`Weak<T>` Type**: Non-owning reference type for breaking reference cycles.
+- [x] **Token**: `Weak` keyword added to lexer.
+- [x] **AST Node**: `WeakType` for type annotations.
+- [x] **Type System**: `{ kind: "weak", inner: Type }` with `typesEqual` and `typeToString` support.
+- [x] **`Weak::new(val)` / `Weak::downgrade(val)`**: Static constructors for creating weak references.
+- [x] **`.upgrade()` Method**: Returns `Option<T>` — `Some(val)` if referent is alive, `None` if collected.
+- [x] **TypeScript Backend**: `Weak::new()` → `_weak_new()` (uses `WeakRef`), `.upgrade()` → `_weak_upgrade()` (uses `.deref()` with Option wrapping). `Weak<T>` type maps to `WeakRef<T>`.
+- [x] **LLVM Backend**: `Weak<T>` maps to raw pointer `T*` (no RC retain/release). Cycle detection is a higher-level concern.
+- [x] **Test Coverage**: 3 tests covering parsing, static constructors, and downgrade.
+
+### 47. FFI Enhancements (Extern Blocks)
+- [x] **`extern "ABI" { ... }` Block Syntax**: Group multiple extern declarations under a shared ABI string (e.g., `extern "C" { fn printf(...); fn malloc(...); }`).
+- [x] **AST Node**: `ExternBlockStatement` with ABI string and list of `ExternStatement` children. Each child `ExternStatement` carries the ABI.
+- [x] **Parser**: `parseExternStatement()` detects `extern "string" {` pattern and delegates to `parseExternFnDecl()` for each function inside the block.
+- [x] **Analyzer**: `ExternBlockStatement` visits each child extern, registering function types in scope.
+- [x] **TypeScript Backend**: Extern blocks produce no output (declarations only).
+- [x] **LLVM Backend**: Extern block children are emitted as standard extern declarations. TypeAlias and ExternBlock statements correctly skipped in main emit pass.
+- [x] **Backward Compatible**: Single `extern fn` syntax continues to work unchanged.
+- [x] **Test Coverage**: 3 tests covering parsing, single extern backward compat, and codegen.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
@@ -426,14 +483,14 @@
 
 ### Tier 3 — Ecosystem & Polish
 - ~~**Full `Result<T, E>` Support**~~: **Completed (see §34 Higher-Level Error Handling)**
-- **Type Aliases**: `type Name = SomeType`.
-- **Array Types**: Fixed-size `[int; 5]` for stack-allocated arrays.
-- **Async/Await**: Important for JS ecosystem interop (large undertaking).
+- ~~**Type Aliases**~~: **Completed (see §43)**
+- ~~**Array Types**~~: **Completed (see §44)**
+- ~~**Async/Await**~~: **Completed (see §45)**
 
 ### Existing Planned Items
 - **Standard Library**: ~~File I/O~~, ~~Math~~, ~~Error Handling~~ — completed (see §28, §34, §38).
-- **Cycle Detection** (Low Priority): Optional weak references or cycle-collector.
-- **FFI Enhancements**: More robust platform-specific ABI handling.
+- ~~**Cycle Detection**~~: **Completed (see §46)**
+- ~~**FFI Enhancements**~~: **Completed (see §47)**
 
 ---
 

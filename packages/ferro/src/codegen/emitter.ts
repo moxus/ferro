@@ -11,9 +11,15 @@ export class Emitter {
     private optionVars: Set<string> = new Set();
     private optionFunctions: Set<string> = new Set();
 
+    // Type alias store for tracking (TS emits `type X = ...`)
+    private typeAliasNames: Set<string> = new Set();
+
     public emit(node: AST.Node): string {
         if (node instanceof AST.Program) {
             return this.emitProgram(node);
+        }
+        if (node instanceof AST.TypeAliasStatement) {
+            return this.emitTypeAliasStatement(node);
         }
         if (node instanceof AST.ConstStatement) {
             return this.emitConstStatement(node);
@@ -41,6 +47,10 @@ export class Emitter {
         }
         if (node instanceof AST.ExportStatement) {
             return this.emitExportStatement(node);
+        }
+        if (node instanceof AST.ExternBlockStatement) {
+            // Extern blocks are declarations only — no TS output needed
+            return "";
         }
         if (node instanceof AST.WhileStatement) {
             return this.emitWhileStatement(node);
@@ -142,6 +152,10 @@ export class Emitter {
             if (method === "is_empty" && node.arguments.length === 0) return `(${obj}.length === 0)`;
             if (method === "slice" && node.arguments.length === 2) return `${obj}.slice(${this.emit(node.arguments[0])}, ${this.emit(node.arguments[1])})`;
             if (method === "substr" && node.arguments.length === 2) return `${obj}.substring(${this.emit(node.arguments[0])}, ${this.emit(node.arguments[1])})`;
+            // Weak<T> methods
+            if (method === "upgrade" && node.arguments.length === 0) return `_weak_upgrade(${obj})`;
+            // Array fixed-size methods
+            if (method === "len" && node.arguments.length === 0) return `${obj}.length`;
             // collect() is identity for TS arrays (map/filter already return arrays eagerly)
             if (method === "collect") return obj;
             // iter() is identity for TS arrays (JS arrays are already iterable)
@@ -201,6 +215,16 @@ export class Emitter {
         }
         if (node instanceof AST.TupleIndexExpression) {
             return `${this.emit(node.left)}[${node.index}]`;
+        }
+        if (node instanceof AST.ArrayRepeatExpression) {
+            return `Array(${node.count}).fill(${this.emit(node.value)})`;
+        }
+        if (node instanceof AST.AwaitExpression) {
+            return `await ${this.emit(node.expression)}`;
+        }
+        if (node instanceof AST.ExternBlockStatement) {
+            // Extern blocks don't emit anything in TS backend
+            return "";
         }
 
         return "";
@@ -307,6 +331,8 @@ function _try_option(opt: any) {
   throw new _OptionNoneError();
 }
 function print(...args: any[]) { console.log(...args); }
+function _weak_new(value: any) { return new WeakRef(value); }
+function _weak_upgrade(ref: any) { const v = ref.deref(); return v !== undefined ? Some(v) : None; }
 `;
         return runtime + program.statements.map((stmt) => this.emit(stmt)).join("\n");
     }
@@ -353,6 +379,12 @@ function print(...args: any[]) { console.log(...args); }
             this.optionVars.add(stmt.name.value);
         }
         return `${keyword} ${stmt.name.value}${typeAnn} = ${value};`;
+    }
+
+    private emitTypeAliasStatement(stmt: AST.TypeAliasStatement): string {
+        this.typeAliasNames.add(stmt.name.value);
+        const mapped = this.mapTSType(stmt.typeValue);
+        return `type ${stmt.name.value} = ${mapped};`;
     }
 
     private emitConstStatement(stmt: AST.ConstStatement): string {
@@ -470,6 +502,12 @@ function print(...args: any[]) { console.log(...args); }
         }
         if (type instanceof AST.TupleType) {
             return `[${type.elements.map(t => this.mapTSType(t)).join(", ")}]`;
+        }
+        if (type instanceof AST.ArrayType) {
+            return `${this.mapTSType(type.elementType)}[]`;
+        }
+        if (type instanceof AST.WeakType) {
+            return `WeakRef<${this.mapTSType(type.innerType)}>`;
         }
         if (type instanceof AST.PointerType) {
             return "any";
@@ -603,7 +641,8 @@ ${bodyStmts}
 }`;
         }
 
-        return `function ${fn.name}${typeParams}(${params}) {\n${body}\n}`;
+        const asyncPrefix = (fn as any).isAsync ? "async " : "";
+        return `${asyncPrefix}function ${fn.name}${typeParams}(${params}) {\n${body}\n}`;
     }
 
     private emitCallExpression(expr: AST.CallExpression): string {
@@ -662,6 +701,17 @@ ${bodyStmts}
             }
             if (methodName === "None") {
                 return `None`;
+            }
+        }
+
+        // Weak::new(val) → _weak_new(val)
+        if (receiverName === "Weak") {
+            const methodName = expr.method.value;
+            if (methodName === "new" && expr.arguments.length === 1) {
+                return `_weak_new(${this.emit(expr.arguments[0])})`;
+            }
+            if (methodName === "downgrade" && expr.arguments.length === 1) {
+                return `_weak_new(${this.emit(expr.arguments[0])})`;
             }
         }
 

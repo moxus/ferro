@@ -1336,6 +1336,120 @@ export class TupleIndexExpression implements Expression {
   toString(): string { return `${this.left.toString()}.${this.index}`; }
 }
 
+// --- Type Alias ---
+
+export class TypeAliasStatement implements Statement {
+  token: Token; // type
+  name: Identifier;
+  typeValue: Type;
+
+  constructor(token: Token, name: Identifier, typeValue: Type) {
+    this.token = token;
+    this.name = name;
+    this.typeValue = typeValue;
+  }
+
+  statementNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `type ${this.name.toString()} = ${this.typeValue.toString()};`;
+  }
+}
+
+// --- Array Type ---
+
+export class ArrayType implements Type {
+  token: Token; // [
+  elementType: Type;
+  size: number;
+
+  constructor(token: Token, elementType: Type, size: number) {
+    this.token = token;
+    this.elementType = elementType;
+    this.size = size;
+  }
+
+  typeNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `[${this.elementType.toString()}; ${this.size}]`;
+  }
+}
+
+export class ArrayRepeatExpression implements Expression {
+  token: Token; // [
+  value: Expression;
+  count: number;
+
+  constructor(token: Token, value: Expression, count: number) {
+    this.token = token;
+    this.value = value;
+    this.count = count;
+  }
+
+  expressionNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `[${this.value.toString()}; ${this.count}]`;
+  }
+}
+
+// --- Async/Await ---
+
+export class AwaitExpression implements Expression {
+  token: Token; // await
+  expression: Expression;
+
+  constructor(token: Token, expression: Expression) {
+    this.token = token;
+    this.expression = expression;
+  }
+
+  expressionNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `${this.expression.toString()}.await`;
+  }
+}
+
+// --- Weak Reference ---
+
+export class WeakType implements Type {
+  token: Token; // Weak
+  innerType: Type;
+
+  constructor(token: Token, innerType: Type) {
+    this.token = token;
+    this.innerType = innerType;
+  }
+
+  typeNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `Weak<${this.innerType.toString()}>`;
+  }
+}
+
+// --- FFI Enhancements ---
+
+export class ExternBlockStatement implements Statement {
+  token: Token; // extern
+  abi: string; // "C", "stdcall", etc.
+  statements: ExternStatement[];
+
+  constructor(token: Token, abi: string, statements: ExternStatement[]) {
+    this.token = token;
+    this.abi = abi;
+    this.statements = statements;
+  }
+
+  statementNode() {}
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string {
+    return `extern "${this.abi}" { ... }`;
+  }
+}
+
 // --- Const Declarations ---
 
 export class ConstStatement implements Statement {

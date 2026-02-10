@@ -311,7 +311,9 @@ export class LLVMEmitter {
             this.currentModulePath = path;
             this.currentScope = mod.scope;
             mod.program.statements.forEach(stmt => {
-                if (stmt instanceof AST.StructDefinition) {
+                if (stmt instanceof AST.TypeAliasStatement) {
+                    this.typeAliasMap.set(stmt.name.value, stmt.typeValue);
+                } else if (stmt instanceof AST.StructDefinition) {
                     this.emitStructDefinition(stmt);
                 } else if (stmt instanceof AST.EnumDefinition) {
                     this.emitEnumDefinition(stmt);
@@ -320,6 +322,8 @@ export class LLVMEmitter {
                         this.emitStructDefinition(stmt.statement);
                     } else if (stmt.statement instanceof AST.EnumDefinition) {
                         this.emitEnumDefinition(stmt.statement);
+                    } else if (stmt.statement instanceof AST.TypeAliasStatement) {
+                        this.typeAliasMap.set(stmt.statement.name.value, stmt.statement.typeValue);
                     }
                 }
             });
@@ -346,6 +350,11 @@ export class LLVMEmitter {
             mod.program.statements.forEach(stmt => {
                 if (stmt instanceof AST.ExternStatement) {
                     this.emitExternStatement(stmt);
+                }
+                if (stmt instanceof AST.ExternBlockStatement) {
+                    for (const es of stmt.statements) {
+                        this.emitExternStatement(es);
+                    }
                 }
             });
         });
@@ -428,6 +437,9 @@ export class LLVMEmitter {
         return null;
     }
 
+    // Type alias store for LLVM backend
+    private typeAliasMap: Map<string, AST.Type> = new Map();
+
     private mapType(type: Type | AST.Type): string {
         let typeName = "";
         if ('kind' in type) {
@@ -436,6 +448,13 @@ export class LLVMEmitter {
             else if (t.kind === "pointer") return `${this.mapType(t.elementType)}*`;
             else if (t.kind === "function") return "{ i8*, i8* }";
             else if (t.kind === "tuple") return `{ ${t.elements.map(e => this.mapType(e)).join(", ")} }`;
+            else if (t.kind === "array") return `[${t.size} x ${this.mapType(t.elementType)}]`;
+            else if (t.kind === "weak") return `${this.mapType(t.inner)}*`; // raw pointer (no RC)
+            else if (t.kind === "promise") return "i32"; // promises not supported in native
+        } else if (type instanceof AST.ArrayType) {
+            return `[${type.size} x ${this.mapType(type.elementType)}]`;
+        } else if (type instanceof AST.WeakType) {
+            return `${this.mapType(type.innerType)}*`;
         } else if (type instanceof AST.TupleType) {
             return `{ ${type.elements.map(e => this.mapType(e)).join(", ")} }`;
         } else if (type instanceof AST.FunctionTypeNode) {
@@ -449,6 +468,11 @@ export class LLVMEmitter {
         // Check current generic type bindings (during monomorphized function emission)
         if (typeName && this.currentTypeBindings.has(typeName)) {
             return this.currentTypeBindings.get(typeName)!;
+        }
+
+        // Check type alias
+        if (typeName && this.typeAliasMap.has(typeName)) {
+            return this.mapType(this.typeAliasMap.get(typeName)!);
         }
 
         if (typeName === "int") return "i32";
@@ -1119,7 +1143,7 @@ export class LLVMEmitter {
         this.output += `define i32 @main() {\nbb_entry:\n`;
         this.pushRcScope();
         program.statements.forEach(stmt => {
-            if (stmt instanceof AST.StructDefinition || stmt instanceof AST.EnumDefinition || stmt instanceof AST.FunctionLiteral || stmt instanceof AST.ImportStatement || stmt instanceof AST.ExternStatement || stmt instanceof AST.TraitDeclaration || stmt instanceof AST.ImplBlock) return;
+            if (stmt instanceof AST.StructDefinition || stmt instanceof AST.EnumDefinition || stmt instanceof AST.FunctionLiteral || stmt instanceof AST.ImportStatement || stmt instanceof AST.ExternStatement || stmt instanceof AST.ExternBlockStatement || stmt instanceof AST.TypeAliasStatement || stmt instanceof AST.TraitDeclaration || stmt instanceof AST.ImplBlock) return;
             if (stmt instanceof AST.ExpressionStatement && stmt.expression instanceof AST.FunctionLiteral) return;
             if (stmt instanceof AST.ExportStatement) {
                 if (stmt.statement instanceof AST.LetStatement || stmt.statement instanceof AST.ConstStatement || stmt.statement instanceof AST.ExpressionStatement) this.emitStatement(stmt.statement);
@@ -1308,6 +1332,14 @@ export class LLVMEmitter {
             this.output += `  store ${type} ${valReg}, ${type}* ${varReg}\n`;
             this.locals.set(stmt.name.value, varReg);
             this.localTypes.set(stmt.name.value, type);
+        } else if (stmt instanceof AST.TypeAliasStatement) {
+            // Store type alias for later resolution
+            this.typeAliasMap.set(stmt.name.value, stmt.typeValue);
+        } else if (stmt instanceof AST.ExternBlockStatement) {
+            // Emit all extern declarations in the block
+            for (const es of stmt.statements) {
+                this.emitStatement(es);
+            }
         } else if (stmt instanceof AST.BlockStatement) {
             stmt.statements.forEach(s => this.emitStatement(s));
         }
@@ -1552,6 +1584,13 @@ export class LLVMEmitter {
             const elemTypes = this.parseTupleType(tupleType);
             return elemTypes[expr.index] || "i32";
         }
+        if (expr instanceof AST.ArrayRepeatExpression) {
+            const elemType = this.getExpressionType(expr.value);
+            return `[${expr.count} x ${elemType}]`;
+        }
+        if (expr instanceof AST.AwaitExpression) {
+            return this.getExpressionType(expr.expression);
+        }
         if (expr instanceof AST.StructLiteral) {
             const sym = this.currentScope?.resolve(expr.name.value);
             let mangledName = this.getMangledName(expr.name.value, this.currentModulePath);
@@ -1734,6 +1773,11 @@ export class LLVMEmitter {
         if (expr instanceof AST.StructLiteral) return this.emitStructLiteral(expr);
         if (expr instanceof AST.TupleLiteral) return this.emitTupleLiteral(expr);
         if (expr instanceof AST.TupleIndexExpression) return this.emitTupleIndex(expr);
+        if (expr instanceof AST.ArrayRepeatExpression) return this.emitArrayRepeatExpression(expr);
+        if (expr instanceof AST.AwaitExpression) {
+            // Await not supported in native backend — emit inner expression directly
+            return this.emitExpression(expr.expression);
+        }
         if (expr instanceof AST.CastExpression) return this.emitCastExpression(expr);
         if (expr instanceof AST.AddressOfExpression) return this.emitAddressOfExpression(expr);
         if (expr instanceof AST.MemberAccessExpression) return this.emitMemberAccess(expr);
@@ -2009,6 +2053,22 @@ export class LLVMEmitter {
         const inner = llvmType.slice(2, -2).trim(); // remove "{ " and " }"
         if (!inner) return [];
         return inner.split(",").map(s => s.trim());
+    }
+
+    private emitArrayRepeatExpression(expr: AST.ArrayRepeatExpression): string {
+        const elemType = this.getExpressionType(expr.value);
+        const arrType = `[${expr.count} x ${elemType}]`;
+        const arrAddr = this.nextRegister();
+        this.output += `  ${arrAddr} = alloca ${arrType}\n`;
+
+        for (let i = 0; i < expr.count; i++) {
+            const valReg = this.emitExpression(expr.value);
+            const elemPtr = this.nextRegister();
+            this.output += `  ${elemPtr} = getelementptr inbounds ${arrType}, ${arrType}* ${arrAddr}, i32 0, i32 ${i}\n`;
+            this.output += `  store ${elemType} ${valReg}, ${elemType}* ${elemPtr}\n`;
+        }
+
+        return arrAddr;
     }
 
     private emitMemberAccess(expr: AST.MemberAccessExpression): string {

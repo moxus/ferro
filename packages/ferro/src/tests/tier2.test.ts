@@ -536,3 +536,263 @@ describe("const Declarations", () => {
         });
     });
 });
+
+// ============================================================
+// 11. Type Aliases
+// ============================================================
+
+describe("Type Aliases", () => {
+    describe("Parsing", () => {
+        it("should parse simple type alias", () => {
+            const { program, errors } = parse(`type Num = int;`);
+            expect(errors.length).toBe(0);
+            expect(program.statements[0]).toBeInstanceOf(AST.TypeAliasStatement);
+            const alias = program.statements[0] as AST.TypeAliasStatement;
+            expect(alias.name.value).toBe("Num");
+            expect(alias.typeValue).toBeInstanceOf(AST.TypeIdentifier);
+        });
+
+        it("should parse tuple type alias", () => {
+            const { program, errors } = parse(`type Pair = (int, string);`);
+            expect(errors.length).toBe(0);
+            const alias = program.statements[0] as AST.TypeAliasStatement;
+            expect(alias.name.value).toBe("Pair");
+            expect(alias.typeValue).toBeInstanceOf(AST.TupleType);
+        });
+
+        it("should parse function type alias", () => {
+            const { program, errors } = parse(`type Callback = (int) -> bool;`);
+            expect(errors.length).toBe(0);
+            const alias = program.statements[0] as AST.TypeAliasStatement;
+            expect(alias.typeValue).toBeInstanceOf(AST.FunctionTypeNode);
+        });
+
+        it("should parse generic type alias", () => {
+            const { program, errors } = parse(`type StringMap = HashMap<string, string>;`);
+            expect(errors.length).toBe(0);
+            const alias = program.statements[0] as AST.TypeAliasStatement;
+            expect(alias.typeValue).toBeInstanceOf(AST.TypeIdentifier);
+            const t = alias.typeValue as AST.TypeIdentifier;
+            expect(t.value).toBe("HashMap");
+            expect(t.typeParams.length).toBe(2);
+        });
+    });
+
+    describe("Type Analysis", () => {
+        it("should resolve type alias in variable declarations", () => {
+            const { analyzer } = parseAndAnalyze(`
+                type Num = int;
+                let x: Num = 42;
+            `);
+            expect(analyzer.diagnostics.length).toBe(0);
+        });
+
+        it("should resolve aliased tuple type", () => {
+            const { analyzer } = parseAndAnalyze(`
+                type Pair = (int, int);
+                let p: Pair = (1, 2);
+            `);
+            expect(analyzer.diagnostics.length).toBe(0);
+        });
+    });
+
+    describe("TypeScript Codegen", () => {
+        it("should emit type alias as TS type declaration", () => {
+            const ts = parseAndEmit(`type Num = int;`);
+            expect(ts).toContain("type Num = number;");
+        });
+
+        it("should emit tuple type alias", () => {
+            const ts = parseAndEmit(`type Pair = (int, string);`);
+            expect(ts).toContain("type Pair = [number, string];");
+        });
+
+        it("should emit function type alias", () => {
+            const ts = parseAndEmit(`type Callback = (int) -> bool;`);
+            expect(ts).toContain("type Callback =");
+        });
+    });
+});
+
+// ============================================================
+// 12. Array Types (Fixed-Size)
+// ============================================================
+
+describe("Array Types", () => {
+    describe("Parsing", () => {
+        it("should parse array type annotation [int; 5]", () => {
+            const { program, errors } = parse(`let arr: [int; 5] = [0; 5];`);
+            expect(errors.length).toBe(0);
+            const stmt = program.statements[0] as AST.LetStatement;
+            expect(stmt.type).toBeInstanceOf(AST.ArrayType);
+            const arrType = stmt.type as AST.ArrayType;
+            expect(arrType.size).toBe(5);
+        });
+
+        it("should parse array repeat expression [val; N]", () => {
+            const { program, errors } = parse(`let arr = [0; 10];`);
+            expect(errors.length).toBe(0);
+            const stmt = program.statements[0] as AST.LetStatement;
+            expect(stmt.value).toBeInstanceOf(AST.ArrayRepeatExpression);
+            const repeat = stmt.value as AST.ArrayRepeatExpression;
+            expect(repeat.count).toBe(10);
+        });
+
+        it("should still parse regular array literals", () => {
+            const { program, errors } = parse(`let arr = [1, 2, 3];`);
+            expect(errors.length).toBe(0);
+            const stmt = program.statements[0] as AST.LetStatement;
+            expect(stmt.value).toBeInstanceOf(AST.ArrayLiteral);
+        });
+    });
+
+    describe("Type Analysis", () => {
+        it("should infer array repeat type", () => {
+            const { analyzer } = parseAndAnalyze(`
+                let arr = [0; 5];
+            `);
+            expect(analyzer.diagnostics.length).toBe(0);
+        });
+    });
+
+    describe("TypeScript Codegen", () => {
+        it("should emit array repeat as Array(N).fill(val)", () => {
+            const ts = parseAndEmit(`let arr = [0; 5];`);
+            expect(ts).toContain("Array(5).fill(0)");
+        });
+
+        it("should emit array type annotation", () => {
+            const ts = parseAndEmit(`let arr: [int; 5] = [0; 5];`);
+            expect(ts).toContain("number[]");
+        });
+    });
+});
+
+// ============================================================
+// 13. Async/Await
+// ============================================================
+
+describe("Async/Await", () => {
+    describe("Parsing", () => {
+        it("should parse async function declaration", () => {
+            const { program, errors } = parse(`
+                async fn fetch_data() -> string {
+                    "hello"
+                }
+            `);
+            expect(errors.length).toBe(0);
+            const stmt = program.statements[0] as AST.ExpressionStatement;
+            expect(stmt.expression).toBeInstanceOf(AST.FunctionLiteral);
+            const fn = stmt.expression as AST.FunctionLiteral;
+            expect((fn as any).isAsync).toBe(true);
+        });
+
+        it("should parse await expression (prefix)", () => {
+            const { program, errors } = parse(`let x = await get_data();`);
+            expect(errors.length).toBe(0);
+            const stmt = program.statements[0] as AST.LetStatement;
+            expect(stmt.value).toBeInstanceOf(AST.AwaitExpression);
+        });
+
+        it("should parse .await syntax (postfix)", () => {
+            const { program, errors } = parse(`let x = get_data().await;`);
+            expect(errors.length).toBe(0);
+            const stmt = program.statements[0] as AST.LetStatement;
+            expect(stmt.value).toBeInstanceOf(AST.AwaitExpression);
+        });
+    });
+
+    describe("Type Analysis", () => {
+        it("should warn when await is used outside async function", () => {
+            const { analyzer } = parseAndAnalyze(`
+                fn sync_fn() -> int {
+                    let x = await something();
+                    x
+                }
+            `);
+            expect(analyzer.diagnostics.length).toBeGreaterThan(0);
+            expect(analyzer.diagnostics.some(d => d.message.includes("await"))).toBe(true);
+        });
+    });
+
+    describe("TypeScript Codegen", () => {
+        it("should emit async function", () => {
+            const ts = parseAndEmit(`
+                async fn fetch_data() -> string {
+                    "hello"
+                }
+            `);
+            expect(ts).toContain("async function fetch_data");
+        });
+
+        it("should emit await expression", () => {
+            const ts = parseAndEmit(`let x = await get_data();`);
+            expect(ts).toContain("await get_data()");
+        });
+    });
+});
+
+// ============================================================
+// 14. Cycle Detection (Weak References)
+// ============================================================
+
+describe("Weak References", () => {
+    describe("Parsing", () => {
+        it("should parse Weak<T> type annotation", () => {
+            const { program, errors } = parse(`let w: Weak<int> = Weak::new(42);`);
+            expect(errors.length).toBe(0);
+        });
+    });
+
+    describe("TypeScript Codegen", () => {
+        it("should emit Weak::new as _weak_new", () => {
+            const ts = parseAndEmit(`let w = Weak::new(obj);`);
+            expect(ts).toContain("_weak_new(obj)");
+        });
+
+        it("should emit Weak::downgrade as _weak_new", () => {
+            const ts = parseAndEmit(`let w = Weak::downgrade(obj);`);
+            expect(ts).toContain("_weak_new(obj)");
+        });
+    });
+});
+
+// ============================================================
+// 15. FFI Enhancements (Extern Blocks)
+// ============================================================
+
+describe("FFI Enhancements", () => {
+    describe("Parsing", () => {
+        it("should parse extern block with ABI", () => {
+            const { program, errors } = parse(`
+                extern "C" {
+                    fn printf(fmt: *i8, ...) -> int;
+                    fn malloc(size: int) -> *i8;
+                }
+            `);
+            expect(errors.length).toBe(0);
+            expect(program.statements[0]).toBeInstanceOf(AST.ExternBlockStatement);
+            const block = program.statements[0] as AST.ExternBlockStatement;
+            expect(block.abi).toBe("C");
+            expect(block.statements.length).toBe(2);
+        });
+
+        it("should still parse single extern fn", () => {
+            const { program, errors } = parse(`extern fn puts(s: *i8) -> int;`);
+            expect(errors.length).toBe(0);
+            expect(program.statements[0]).toBeInstanceOf(AST.ExternStatement);
+        });
+    });
+
+    describe("TypeScript Codegen", () => {
+        it("should emit nothing for extern blocks (declarations only)", () => {
+            const ts = parseAndEmit(`
+                extern "C" {
+                    fn malloc(size: int) -> *i8;
+                }
+            `);
+            // Extern blocks produce no TS output
+            expect(ts).not.toContain("malloc");
+        });
+    });
+});

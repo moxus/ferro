@@ -85,6 +85,8 @@ export class Parser {
     this.registerPrefix(TokenType.LBracket, this.parseArrayLiteral.bind(this));
     this.registerPrefix(TokenType.Unsafe, this.parseUnsafeExpression.bind(this));
     this.registerPrefix(TokenType.Ampersand, this.parseAddressOfExpression.bind(this));
+    this.registerPrefix(TokenType.Async, this.parseAsyncExpression.bind(this));
+    this.registerPrefix(TokenType.Await, this.parseAwaitExpression.bind(this));
 
     this.registerInfix(TokenType.Plus, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.Minus, this.parseInfixExpression.bind(this));
@@ -175,6 +177,8 @@ export class Parser {
         return this.parseContinueStatement();
       case TokenType.Const:
         return this.parseConstStatement();
+      case TokenType.TypeKeyword:
+        return this.parseTypeAliasStatement();
       case TokenType.Struct:
         return this.parseStructDefinition();
       case TokenType.Enum:
@@ -185,6 +189,8 @@ export class Parser {
         return this.parseExportStatement();
       case TokenType.Extern:
         return this.parseExternStatement();
+      case TokenType.Async:
+        return this.parseExpressionStatement(); // async fn ... parsed as expression
       default:
         return this.parseExpressionStatement();
     }
@@ -261,8 +267,46 @@ export class Parser {
       return new AST.AddressOfExpression(token, value);
   }
 
-  private parseExternStatement(): AST.ExternStatement | null {
+  private parseAsyncExpression(): AST.Expression | null {
+    const token = this.curToken; // async
+    // async fn name(...) { ... }
+    if (!this.expectPeek(TokenType.Fn)) return null;
+    const fn = this.parseFunctionLiteral() as AST.FunctionLiteral;
+    if (!fn) return null;
+    (fn as any).isAsync = true;
+    return fn;
+  }
+
+  private parseAwaitExpression(): AST.Expression | null {
+    const token = this.curToken; // await
+    this.nextToken();
+    const expr = this.parseExpression(Precedence.PREFIX);
+    if (!expr) return null;
+    return new AST.AwaitExpression(token, expr);
+  }
+
+  private parseExternStatement(): AST.Statement | null {
     const token = this.curToken;
+
+    // extern "C" { ... } block syntax
+    if (this.peekTokenIs(TokenType.String)) {
+      this.nextToken();
+      const abi = this.curToken.literal; // e.g., "C", "stdcall"
+      if (!this.expectPeek(TokenType.LBrace)) return null;
+      this.nextToken(); // consume {
+
+      const statements: AST.ExternStatement[] = [];
+      while (!this.curTokenIs(TokenType.RBrace) && !this.curTokenIs(TokenType.EOF)) {
+        if (this.curTokenIs(TokenType.Fn)) {
+          const externStmt = this.parseExternFnDecl(token, abi);
+          if (externStmt) statements.push(externStmt);
+        }
+        this.nextToken();
+      }
+
+      return new AST.ExternBlockStatement(token, abi, statements);
+    }
+
     if (!this.expectPeek(TokenType.Fn)) return null;
     if (!this.expectPeek(TokenType.Identifier)) return null;
     const name = new AST.Identifier(this.curToken, this.curToken.literal);
@@ -311,6 +355,56 @@ export class Parser {
     if (!this.expectPeek(TokenType.Semi)) return null;
 
     return new AST.ExternStatement(token, name, params, returnType, variadic);
+  }
+
+  private parseExternFnDecl(blockToken: Token, abi: string): AST.ExternStatement | null {
+    const token = this.curToken; // fn
+    if (!this.expectPeek(TokenType.Identifier)) return null;
+    const name = new AST.Identifier(this.curToken, this.curToken.literal);
+
+    if (!this.expectPeek(TokenType.LPharen)) return null;
+
+    const params: AST.Parameter[] = [];
+    let variadic = false;
+
+    if (!this.peekTokenIs(TokenType.RPharen)) {
+      if (this.peekTokenIs(TokenType.DotDotDot)) {
+        this.nextToken();
+        variadic = true;
+      } else {
+        this.nextToken();
+        const firstParam = this.parseParameter();
+        if (firstParam) params.push(firstParam);
+        while (this.peekTokenIs(TokenType.Comma)) {
+          this.nextToken();
+          if (this.peekTokenIs(TokenType.DotDotDot)) {
+            this.nextToken();
+            variadic = true;
+            break;
+          }
+          this.nextToken();
+          const param = this.parseParameter();
+          if (param) params.push(param);
+        }
+      }
+    }
+
+    if (!this.expectPeek(TokenType.RPharen)) return null;
+
+    let returnType: AST.Type = new AST.TypeIdentifier({ type: TokenType.Identifier, literal: "void", line: 0, column: 0 }, "void");
+    if (this.peekTokenIs(TokenType.Arrow)) {
+      this.nextToken();
+      this.nextToken();
+      returnType = this.parseType();
+    }
+
+    if (this.peekTokenIs(TokenType.Semi)) {
+      this.nextToken();
+    }
+
+    const stmt = new AST.ExternStatement(token, name, params, returnType, variadic);
+    (stmt as any).abi = abi;
+    return stmt;
   }
 
   private parseStructDefinition(): AST.StructDefinition | null {
@@ -617,6 +711,24 @@ export class Parser {
     }
 
     return new AST.ConstStatement(token, name, type, value);
+  }
+
+  private parseTypeAliasStatement(): AST.TypeAliasStatement | null {
+    const token = this.curToken; // type
+
+    if (!this.expectPeek(TokenType.Identifier)) return null;
+    const name = new AST.Identifier(this.curToken, this.curToken.literal);
+
+    if (!this.expectPeek(TokenType.Equals)) return null;
+
+    this.nextToken(); // consume =, move to type
+    const typeValue = this.parseType();
+
+    if (this.peekTokenIs(TokenType.Semi)) {
+      this.nextToken();
+    }
+
+    return new AST.TypeAliasStatement(token, name, typeValue);
   }
 
   private parseReturnStatement(): AST.ReturnStatement | null {
@@ -1201,6 +1313,23 @@ export class Parser {
       return new AST.PointerType(token, elementType);
     }
 
+    // Array type: [Type; N]
+    if (token.type === TokenType.LBracket) {
+      this.nextToken(); // consume [
+      const elemType = this.parseType();
+      if (!this.expectPeek(TokenType.Semi)) {
+        return new AST.TypeIdentifier(token, "unknown");
+      }
+      if (!this.expectPeek(TokenType.Number)) {
+        return new AST.TypeIdentifier(token, "unknown");
+      }
+      const size = parseInt(this.curToken.literal, 10);
+      if (!this.expectPeek(TokenType.RBracket)) {
+        return new AST.TypeIdentifier(token, "unknown");
+      }
+      return new AST.ArrayType(token, elemType, size);
+    }
+
     // Function type: (paramType, ...) -> returnType
     // Tuple type: (Type, Type, ...)
     if (token.type === TokenType.LPharen) {
@@ -1428,6 +1557,11 @@ export class Parser {
       const index = parseInt(this.curToken.literal, 10);
       return new AST.TupleIndexExpression(token, left, index);
     }
+    // .await syntax: expr.await
+    if (this.peekTokenIs(TokenType.Await)) {
+      this.nextToken();
+      return new AST.AwaitExpression(token, left);
+    }
     if (!this.expectPeek(TokenType.Identifier)) return null;
     const member = new AST.Identifier(this.curToken, this.curToken.literal);
     return new AST.MemberAccessExpression(token, left, member);
@@ -1520,6 +1654,15 @@ export class Parser {
     this.nextToken();
     const first = this.parseExpression(Precedence.LOWEST);
     if (first) elements.push(first);
+
+    // Array repeat syntax: [value; count]
+    if (this.peekTokenIs(TokenType.Semi)) {
+      this.nextToken(); // consume ;
+      if (!this.expectPeek(TokenType.Number)) return null;
+      const count = parseInt(this.curToken.literal, 10);
+      if (!this.expectPeek(TokenType.RBracket)) return null;
+      return new AST.ArrayRepeatExpression(token, first!, count);
+    }
 
     while (this.peekTokenIs(TokenType.Comma)) {
       this.nextToken();
