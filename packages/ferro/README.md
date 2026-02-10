@@ -5,8 +5,21 @@ Ferro is a rusty script for the JavaScript ecosystem. It brings Rust's safety gu
 ## Features
 - **Immutability by Default**: Variables are immutable unless marked `mut`.
 - **Result Types**: First-class support for `Result<T, E>` and `?` operator.
-- **Expressions**: `if`, `block`, and `match` (planned) are expressions.
-- **Transpilation**: Compiles to clean, readable TypeScript.
+- **Expressions**: `if`, `block`, and `match` are expressions.
+- **Dual Compilation**: Transpiles to TypeScript or compiles to native binaries via LLVM.
+- **Algebraic Data Types**: Enums with associated data, structs, generics, and pattern matching.
+- **Traits and Generics**: Trait bounds, monomorphization, and trait-based dispatch.
+- **Closures**: Trailing lambda syntax, mutable capture, and escaping closures.
+- **Lazy Iterators**: Compile-time chain fusion with zero runtime overhead.
+- **Collections**: `Vec<T>` and `HashMap<K, V>` with method chaining.
+- **Type Aliases**: Named aliases for complex types (`type Name = Type;`).
+- **Fixed-Size Arrays**: `[T; N]` types and `[val; N]` repeat expressions.
+- **Async/Await**: `async` functions with `Promise<T>` and prefix/postfix `await`.
+- **Weak References**: `Weak<T>` for breaking reference cycles.
+- **FFI Extern Blocks**: `extern "C" { ... }` for grouping foreign declarations.
+- **Modules**: `import`/`export` with cross-module compilation.
+- **Macros**: Compile-time code generation with quasi-quoting.
+- **Unsafe Blocks**: Controlled access to pointer dereference and extern calls.
 
 ## Install
 

@@ -35,6 +35,15 @@ Ferro is a Rust-inspired scripting language for the JS/TS ecosystem, written in 
 - `node packages/ferro/dist/cli.js <file.fe>` — Transpile to TypeScript
 - `node packages/ferro/dist/cli.js <file.fe> --native` — Compile to native binary via LLVM
 
+## Documentation
+
+**Always update documentation when language features are added, changed, or removed.** The following files must be kept in sync with the implementation:
+- `README.md` (root) — Feature highlights and language guide
+- `packages/ferro/README.md` — Package-level feature summary
+- `packages/ferro/docs/MANUAL.md` — Full language reference manual
+
+When implementing a new language feature, updating documentation is part of completing the feature — not a separate task.
+
 ## Key Conventions
 
 - The LLVM backend uses name mangling (`m{id}_{name}`) for cross-module symbols. Runtime exports (`fs_string_*`, `fs_print_*`) are exempted and use canonical names.

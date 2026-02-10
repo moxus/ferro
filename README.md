@@ -12,6 +12,11 @@ Ferro is a Rust-inspired programming language for the JavaScript/TypeScript ecos
 - **Lazy iterators** with compile-time chain fusion (zero runtime overhead)
 - **Collections** &mdash; `Vec<T>` and `HashMap<K, V>` with method chaining
 - **Traits and generics** with trait bounds and monomorphization
+- **Type aliases** for readable, reusable type definitions
+- **Fixed-size arrays** with `[T; N]` type syntax and repeat expressions
+- **Async/await** with `Promise<T>` types for asynchronous programming
+- **Weak references** via `Weak<T>` for breaking reference cycles
+- **FFI extern blocks** with ABI strings for grouping foreign declarations
 - **Reference counting** for automatic memory management in native builds
 - **Self-hosted runtime** written entirely in Ferro
 - **LSP and VSCode extension** for editor support
@@ -575,6 +580,86 @@ Math::clamp(15, 0, 10)   // 10
 
 ---
 
+## Type Aliases
+
+Create named aliases for complex types:
+
+```rust
+type IntPair = (int, int);
+type Callback = (int) -> string;
+type StringResult = Result<string, string>;
+
+let pair: IntPair = (1, 2);
+```
+
+Type aliases are transparent &mdash; the alias and the underlying type are interchangeable everywhere.
+
+---
+
+## Arrays
+
+Fixed-size arrays with compile-time known length:
+
+```rust
+// Array type annotation
+let nums: [int; 3] = [1, 2, 3];
+
+// Repeat expression: creates [0, 0, 0, 0, 0]
+let zeros = [0; 5];
+```
+
+Arrays differ from `Vec<T>` in that their size is fixed at compile time. In the LLVM backend, arrays are stack-allocated.
+
+---
+
+## Async / Await
+
+Write asynchronous code with `async` functions and `await`:
+
+```rust
+async fn fetch_data(url: string) -> string {
+    let response = await http_get(url);
+    response
+}
+
+async fn main() {
+    let data = await fetch_data("https://example.com");
+    print(data);
+}
+```
+
+`async` functions return `Promise<T>`. The `await` keyword can be used as a prefix (`await expr`) or as a postfix (`.await`):
+
+```rust
+let result = fetch_data("url").await;
+```
+
+`await` can only be used inside `async` functions &mdash; the analyzer enforces this at compile time.
+
+---
+
+## Weak References
+
+Use `Weak<T>` to break reference cycles in data structures:
+
+```rust
+struct Node {
+    value: int,
+    parent: Weak<Node>
+}
+
+// Create a weak reference from a strong reference
+let strong = Node { value: 1, parent: Weak::new() };
+let weak = Weak::downgrade(strong);
+
+// Upgrade back to a strong reference (may be null if deallocated)
+let maybe_strong = weak.upgrade();
+```
+
+In the TypeScript backend, `Weak<T>` compiles to `WeakRef<T>`. In the LLVM backend, weak references are raw pointers without reference-count overhead.
+
+---
+
 ## Unsafe Code
 
 Certain operations require an `unsafe` block: extern function calls, pointer dereference, and pointer arithmetic.
@@ -589,6 +674,18 @@ fn example() {
         *ptr = 42 as i8;
         free(ptr);
     }
+}
+```
+
+### Extern Blocks
+
+Group multiple extern declarations with an ABI string:
+
+```rust
+extern "C" {
+    fn malloc(size: i32) -> *i8;
+    fn free(ptr: *i8);
+    fn realloc(ptr: *i8, size: i32) -> *i8;
 }
 ```
 
@@ -696,4 +793,5 @@ ferro build example.fe --native
 let  mut  fn  return  if  else  match  while  for  in
 break  continue  struct  enum  trait  impl  macro  quote
 true  false  null  import  export  from  as  pub  extern  unsafe
+type  async  await  weak
 ```
