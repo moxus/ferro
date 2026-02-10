@@ -138,6 +138,10 @@ class MacroEmitter extends Emitter {
             const val = node.value ? this.emitInner(node.value) : "";
             return `let ${mut}${node.name.toString()} = ${val};`;
         }
+        if (node instanceof AST.ReturnStatement) {
+            const val = node.returnValue ? this.emitInner(node.returnValue) : "";
+            return `return ${val};`;
+        }
         if (node instanceof AST.ExpressionStatement) {
             return node.expression ? this.emitInner(node.expression) + ";" : "";
         }
