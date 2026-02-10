@@ -15,6 +15,9 @@ export type Type =
     | { kind: "generic_param", name: string } // T
     | { kind: "enum", name: string, variants: EnumVariantInfo[] }
     | { kind: "struct", name: string, typeParams: string[], fields: { name: string, type: Type }[] }
+    | { kind: "array", elementType: Type, size: number }
+    | { kind: "weak", inner: Type }
+    | { kind: "promise", inner: Type }
     | { kind: "unknown" }; // For compilation errors or placeholders
 
 export const IntType: Type = { kind: "primitive", name: "int" };
@@ -71,6 +74,15 @@ export function typesEqual(a: Type, b: Type): boolean {
         return a.elements.length === b.elements.length &&
             a.elements.every((e, i) => typesEqual(e, b.elements[i]));
     }
+    if (a.kind === "array" && b.kind === "array") {
+        return a.size === b.size && typesEqual(a.elementType, b.elementType);
+    }
+    if (a.kind === "weak" && b.kind === "weak") {
+        return typesEqual(a.inner, b.inner);
+    }
+    if (a.kind === "promise" && b.kind === "promise") {
+        return typesEqual(a.inner, b.inner);
+    }
     return false;
 }
 
@@ -88,6 +100,9 @@ export function typeToString(t: Type): string {
     if (t.kind === "option") return `Option<${typeToString(t.inner)}>`;
     if (t.kind === "tuple") return `(${t.elements.map(typeToString).join(", ")})`;
     if (t.kind === "function") return `(${t.params.map(typeToString).join(", ")}) -> ${typeToString(t.returnType)}`;
+    if (t.kind === "array") return `[${typeToString(t.elementType)}; ${t.size}]`;
+    if (t.kind === "weak") return `Weak<${typeToString(t.inner)}>`;
+    if (t.kind === "promise") return `Promise<${typeToString(t.inner)}>`;
     if (t.kind === "unknown") return "?";
     return "complex";
 }

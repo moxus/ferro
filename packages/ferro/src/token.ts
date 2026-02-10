@@ -31,6 +31,10 @@ export enum TokenType {
   Extern = "EXTERN",
   Unsafe = "UNSAFE",
   Const = "CONST",
+  TypeKeyword = "TYPE",
+  Async = "ASYNC",
+  Await = "AWAIT",
+  Weak = "WEAK",
 
   // Literals
   Identifier = "IDENTIFIER",
@@ -114,6 +118,10 @@ export const Keywords: Record<string, TokenType> = {
   extern: TokenType.Extern,
   unsafe: TokenType.Unsafe,
   const: TokenType.Const,
+  type: TokenType.TypeKeyword,
+  async: TokenType.Async,
+  await: TokenType.Await,
+  weak: TokenType.Weak,
 };
 
 export function lookupIdent(ident: string): TokenType {

@@ -1,7 +1,7 @@
 import * as AST from "../ast/ast";
 import { Token, TokenType } from "../token";
 import { SymbolTable } from "./symbol_table";
-import { Type, IntType, F64Type, StringType, BoolType, VoidType, NullType, FileType, AnyType, UnknownType, typesEqual, typeToString, EnumVariantInfo } from "./types";
+import { Type, IntType, F64Type, StringType, BoolType, VoidType, NullType, FileType, AnyType, UnknownType, typesEqual, typeToString, EnumVariantInfo, I8Type } from "./types";
 
 export interface Diagnostic {
     message: string;
@@ -29,6 +29,10 @@ export class Analyzer {
     private currentFnReturnsOption: boolean = false;
     // Track loop nesting depth for break/continue validation
     private loopDepth: number = 0;
+    // Type alias store: name -> resolved Type
+    private typeAliases: Map<string, Type> = new Map();
+    // Track whether we're inside an async function (for await validation)
+    private insideAsyncFn: boolean = false;
 
     public analyze(program: AST.Program, initialScope?: SymbolTable, modulePath: string = "") {
         this.currentModulePath = modulePath;
@@ -103,6 +107,14 @@ export class Analyzer {
             this.visitForStatement(stmt);
         } else if (stmt instanceof AST.ConstStatement) {
             this.visitConstStatement(stmt);
+        } else if (stmt instanceof AST.TypeAliasStatement) {
+            this.visitTypeAliasStatement(stmt);
+        } else if (stmt instanceof AST.ExternBlockStatement) {
+            // FFI extern block: visit each extern statement inside
+            for (const es of stmt.statements) {
+                const retType = this.resolveType(es.returnType);
+                this.scope.define(es.name.value, { kind: "function", params: [], returnType: retType }, false, es.token.line, this.currentModulePath, true);
+            }
         } else if (stmt instanceof AST.BreakStatement) {
             if (this.loopDepth === 0) {
                 this.error("`break` can only be used inside a loop", stmt.token);
@@ -261,6 +273,13 @@ export class Analyzer {
         this.scope.define(stmt.name.value, inferredType, false, stmt.token.line, this.currentModulePath);
     }
 
+    private visitTypeAliasStatement(stmt: AST.TypeAliasStatement) {
+        const resolvedType = this.resolveType(stmt.typeValue);
+        this.typeAliases.set(stmt.name.value, resolvedType);
+        // Also define in scope so it can be used as a type name
+        this.scope.define(stmt.name.value, resolvedType, false, stmt.token.line, this.currentModulePath);
+    }
+
     private visitBlockStatement(block: AST.BlockStatement) {
         const prevScope = this.scope;
         this.scope = this.scope.createChild();
@@ -371,6 +390,9 @@ export class Analyzer {
         if (expr instanceof AST.FunctionLiteral) {
             const prevContext = this.genericContext;
             this.genericContext = [...prevContext, ...expr.typeParams];
+            const isAsync = !!(expr as any).isAsync;
+            const prevAsync = this.insideAsyncFn;
+            if (isAsync) this.insideAsyncFn = true;
 
             const retType = expr.returnType ? this.resolveType(expr.returnType) : VoidType;
 
@@ -409,10 +431,12 @@ export class Analyzer {
 
             this.currentFnReturnsResult = prevFnReturnsResult;
             this.currentFnReturnsOption = prevFnReturnsOption;
+            this.insideAsyncFn = prevAsync;
             this.scope = prevScope;
             this.genericContext = prevContext;
 
-            return { kind: "function", params: expr.parameters.map(p => this.resolveType(p.type)), returnType: retType };
+            const fnRetType = isAsync ? { kind: "promise" as const, inner: retType } : retType;
+            return { kind: "function", params: expr.parameters.map(p => this.resolveType(p.type)), returnType: fnRetType };
         }
 
         if (expr instanceof AST.CallExpression) {
@@ -1032,6 +1056,23 @@ export class Analyzer {
             return StringType;
         }
 
+        if (expr instanceof AST.ArrayRepeatExpression) {
+            const elemType = this.visitExpression(expr.value);
+            return { kind: "array", elementType: elemType, size: expr.count };
+        }
+
+        if (expr instanceof AST.AwaitExpression) {
+            if (!this.insideAsyncFn) {
+                this.error("`await` can only be used inside an async function", expr.token);
+            }
+            const innerType = this.visitExpression(expr.expression);
+            if (innerType.kind === "promise") {
+                return innerType.inner;
+            }
+            // Permissive: allow await on any type
+            return innerType;
+        }
+
         return UnknownType;
     }
 
@@ -1181,6 +1222,10 @@ export class Analyzer {
                     this.collectIdentifiers(part, result);
                 }
             }
+        } else if (node instanceof AST.ArrayRepeatExpression) {
+            this.collectIdentifiers(node.value, result);
+        } else if (node instanceof AST.AwaitExpression) {
+            this.collectIdentifiers(node.expression, result);
         }
         // ClosureExpression: do NOT recurse — nested closures compute their own captures
     }
@@ -1246,15 +1291,25 @@ export class Analyzer {
 
     private resolveType(t: AST.Type): Type {
         const name = t instanceof AST.TypeIdentifier ? t.value : t.toString();
-        
+
         if (name === "int") return IntType;
         if (name === "f64") return F64Type;
-        if (name === "i8") return { kind: "primitive", name: "i8" }; // Or reuse constant
+        if (name === "i8") return { kind: "primitive", name: "i8" };
         if (name === "string") return StringType;
         if (name === "bool") return BoolType;
         if (name === "any") return { kind: "primitive", name: "any" };
         if (t instanceof AST.PointerType) {
             return { kind: "pointer", elementType: this.resolveType(t.elementType) };
+        }
+        if (t instanceof AST.ArrayType) {
+            return { kind: "array", elementType: this.resolveType(t.elementType), size: t.size };
+        }
+        if (t instanceof AST.WeakType) {
+            return { kind: "weak", inner: this.resolveType(t.innerType) };
+        }
+        // Check type alias before other processing
+        if (t instanceof AST.TypeIdentifier && t.typeParams.length === 0 && this.typeAliases.has(name)) {
+            return this.typeAliases.get(name)!;
         }
         if (t instanceof AST.TupleType) {
             return {
@@ -1283,6 +1338,22 @@ export class Analyzer {
         if (t instanceof AST.TypeIdentifier && t.value === "Option" && t.typeParams.length === 1) {
             return {
                 kind: "option",
+                inner: this.resolveType(t.typeParams[0]),
+            };
+        }
+
+        // Weak<T> → specialized weak type
+        if (t instanceof AST.TypeIdentifier && t.value === "Weak" && t.typeParams.length === 1) {
+            return {
+                kind: "weak",
+                inner: this.resolveType(t.typeParams[0]),
+            };
+        }
+
+        // Promise<T> → specialized promise type
+        if (t instanceof AST.TypeIdentifier && t.value === "Promise" && t.typeParams.length === 1) {
+            return {
+                kind: "promise",
                 inner: this.resolveType(t.typeParams[0]),
             };
         }
@@ -1351,6 +1422,21 @@ export class Analyzer {
             const paramTypes = t.params.map(p => this.typeToASTType(p, refToken));
             const returnType = this.typeToASTType(t.returnType, refToken);
             return new AST.FunctionTypeNode(synth, paramTypes, returnType);
+        }
+        if (t.kind === "option") {
+            synth.literal = "Option";
+            return new AST.TypeIdentifier(synth, "Option", [this.typeToASTType(t.inner, refToken)]);
+        }
+        if (t.kind === "array") {
+            return new AST.ArrayType(synth, this.typeToASTType(t.elementType, refToken), t.size);
+        }
+        if (t.kind === "weak") {
+            synth.literal = "Weak";
+            return new AST.TypeIdentifier(synth, "Weak", [this.typeToASTType(t.inner, refToken)]);
+        }
+        if (t.kind === "promise") {
+            synth.literal = "Promise";
+            return new AST.TypeIdentifier(synth, "Promise", [this.typeToASTType(t.inner, refToken)]);
         }
         // Fallback: unknown → "any"
         synth.literal = "any";
