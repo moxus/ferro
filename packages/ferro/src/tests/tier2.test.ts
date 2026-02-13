@@ -92,7 +92,9 @@ describe("Tuple Types", () => {
             const stmt = program.statements[0] as AST.LetStatement;
             // (42) is a grouped expression, not a tuple
             expect(stmt.value).not.toBeInstanceOf(AST.TupleLiteral);
-            expect(stmt.value).toBeInstanceOf(AST.IntegerLiteral);
+            expect(stmt.value).toBeInstanceOf(AST.GroupedExpression);
+            const grouped = stmt.value as AST.GroupedExpression;
+            expect(grouped.expression).toBeInstanceOf(AST.IntegerLiteral);
         });
     });
 

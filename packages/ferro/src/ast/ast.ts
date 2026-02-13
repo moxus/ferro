@@ -204,6 +204,20 @@ export class NullLiteral implements Expression {
   toString(): string { return "null"; }
 }
 
+export class GroupedExpression implements Expression {
+  token: Token; // (
+  expression: Expression;
+
+  constructor(token: Token, expression: Expression) {
+    this.token = token;
+    this.expression = expression;
+  }
+
+  expressionNode() { }
+  tokenLiteral(): string { return this.token.literal; }
+  toString(): string { return `(${this.expression.toString()})`; }
+}
+
 export class PrefixExpression implements Expression {
   token: Token; // The prefix token, e.g. ! or -
   operator: string;
@@ -229,6 +243,7 @@ export class InfixExpression implements Expression {
   left: Expression;
   operator: string;
   right: Expression;
+  integerDivision?: boolean; // Set by analyzer when both operands are int and operator is /
 
   constructor(token: Token, left: Expression, operator: string, right: Expression) {
     this.token = token;

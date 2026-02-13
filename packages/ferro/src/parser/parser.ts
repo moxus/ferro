@@ -38,6 +38,7 @@ const PRECEDENCES: Record<string, Precedence> = {
   [TokenType.Minus]: Precedence.SUM,
   [TokenType.Slash]: Precedence.PRODUCT,
   [TokenType.Star]: Precedence.PRODUCT,
+  [TokenType.Percent]: Precedence.PRODUCT,
   [TokenType.LPharen]: Precedence.CALL,
 };
 
@@ -92,6 +93,7 @@ export class Parser {
     this.registerInfix(TokenType.Minus, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.Slash, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.Star, this.parseInfixExpression.bind(this));
+    this.registerInfix(TokenType.Percent, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.Equals, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.EqEq, this.parseInfixExpression.bind(this));
     this.registerInfix(TokenType.Question, this.parseQuestionExpression.bind(this));
@@ -939,7 +941,7 @@ export class Parser {
     if (!this.expectPeek(TokenType.RPharen)) {
       return null;
     }
-    return exp;
+    return new AST.GroupedExpression(openToken, exp);
   }
 
   /**
