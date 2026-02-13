@@ -40,13 +40,44 @@ let status = if (score > 50) { "Pass" } else { "Fail" };
 ```
 
 ### Match Expressions
-`match` allows pattern matching on values. It compiles to an exhaustive `switch` statement.
+`match` allows pattern matching on values. All match expressions must be **exhaustive** — every possible value must be handled.
 
 ```rust
 let desc = match value {
     0 => "Zero",
     1 => "One",
-    _ => "Many",
+    _ => "Many",    // wildcard required for int (non-enumerable type)
+}
+```
+
+#### Exhaustiveness Rules
+
+- **Enums**: Every variant must be covered, or use a wildcard `_`.
+- **`Option<T>`**: Both `Some` and `None` must be covered, or use `_`.
+- **`Result<T, E>`**: Both `Ok` and `Err` must be covered, or use `_`.
+- **`bool`**: Both `true` and `false` must be covered, or use `_`.
+- **`int`, `string`, `f64`, and other types**: A wildcard `_` arm is required.
+
+```rust
+// Enum — all variants covered
+enum Color { Red, Green, Blue }
+match c {
+    Color::Red => 1,
+    Color::Green => 2,
+    Color::Blue => 3,
+}
+
+// Bool — both values covered
+match flag {
+    true => "yes",
+    false => "no",
+}
+
+// Int — wildcard required
+match code {
+    200 => "OK",
+    404 => "Not Found",
+    _ => "Unknown",      // ERROR without this line
 }
 ```
 

@@ -1,6 +1,6 @@
 # Ferro Status Log
 
-**Date:** February 10, 2026
+**Date:** February 13, 2026
 **Project Name:** Ferro (Rusty addon for JS/TS with Native LLVM support)
 
 ---
@@ -390,7 +390,9 @@
 - [x] **Enum Variants**: Collects all variant names from the matched enum type and reports missing variants.
 - [x] **`Option<T>`**: Checks for `Some` and `None` coverage.
 - [x] **`Result<T, E>`**: Checks for `Ok` and `Err` coverage.
-- [x] **Wildcard Suppression**: Wildcard `_` arm suppresses exhaustiveness warnings (covers all remaining cases).
+- [x] **`bool` Exhaustiveness**: Checks for both `true` and `false` literal coverage.
+- [x] **Non-Enumerable Types**: `int`, `string`, `f64`, structs, tuples, arrays, and other non-enumerable types require a wildcard `_` pattern.
+- [x] **Wildcard Suppression**: Wildcard `_` arm suppresses exhaustiveness errors (covers all remaining cases).
 - [x] **Error Messages**: Reports all missing variant names in a single diagnostic, e.g., `Non-exhaustive match: missing variant(s) 'Color::Green', 'Color::Blue'`.
 
 ### 42. `const` Declarations

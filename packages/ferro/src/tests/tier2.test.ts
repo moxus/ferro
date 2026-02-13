@@ -448,6 +448,113 @@ describe("Pattern Match Exhaustiveness", () => {
         expect(analyzer.diagnostics[0].message).toContain("East");
         expect(analyzer.diagnostics[0].message).toContain("West");
     });
+
+    // --- Bool exhaustiveness ---
+
+    it("should error when bool match is missing 'false'", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(b: bool) -> int {
+                match b {
+                    true => { 1 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBeGreaterThan(0);
+        expect(analyzer.diagnostics[0].message).toContain("Non-exhaustive");
+        expect(analyzer.diagnostics[0].message).toContain("false");
+    });
+
+    it("should error when bool match is missing 'true'", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(b: bool) -> int {
+                match b {
+                    false => { 0 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBeGreaterThan(0);
+        expect(analyzer.diagnostics[0].message).toContain("Non-exhaustive");
+        expect(analyzer.diagnostics[0].message).toContain("true");
+    });
+
+    it("should not error when bool match covers both true and false", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(b: bool) -> int {
+                match b {
+                    true => { 1 }
+                    false => { 0 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBe(0);
+    });
+
+    it("should not error when bool match has wildcard", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(b: bool) -> int {
+                match b {
+                    true => { 1 }
+                    _ => { 0 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBe(0);
+    });
+
+    // --- Non-enumerable type exhaustiveness (int, string, etc.) ---
+
+    it("should error when int match has no wildcard", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(x: int) -> int {
+                match x {
+                    1 => { 10 }
+                    2 => { 20 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBeGreaterThan(0);
+        expect(analyzer.diagnostics[0].message).toContain("Non-exhaustive");
+        expect(analyzer.diagnostics[0].message).toContain("wildcard");
+    });
+
+    it("should not error when int match has wildcard", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(x: int) -> int {
+                match x {
+                    1 => { 10 }
+                    2 => { 20 }
+                    _ => { 0 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBe(0);
+    });
+
+    it("should error when string match has no wildcard", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(s: string) -> int {
+                match s {
+                    "hello" => { 1 }
+                    "world" => { 2 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBeGreaterThan(0);
+        expect(analyzer.diagnostics[0].message).toContain("Non-exhaustive");
+        expect(analyzer.diagnostics[0].message).toContain("wildcard");
+    });
+
+    it("should not error when string match has wildcard", () => {
+        const { analyzer } = parseAndAnalyze(`
+            fn test(s: string) -> int {
+                match s {
+                    "hello" => { 1 }
+                    _ => { 0 }
+                }
+            }
+        `);
+        expect(analyzer.diagnostics.length).toBe(0);
+    });
 });
 
 // ============================================================
