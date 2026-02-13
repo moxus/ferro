@@ -49,3 +49,18 @@ When implementing a new language feature, updating documentation is part of comp
 - The LLVM backend uses name mangling (`m{id}_{name}`) for cross-module symbols. Runtime exports (`fs_string_*`, `fs_print_*`) are exempted and use canonical names.
 - The CLI auto-detects whether the self-hosted runtime is in the module graph and skips linking `runtime.c` when it is.
 - The analyzer enforces `unsafe` blocks for pointer dereference and extern function calls.
+
+## Bug Logging
+
+When you discover a bug during development that is **not directly related to your current task**, do not stop to fix it. Instead:
+
+1. Log it in `bugs.md` at the project root following the existing format:
+   - Assign the next `B###` ID
+   - Include: severity, component, discovery date, description with code example, and any known workaround
+2. Continue with your current task, using a workaround if needed
+3. Mention the new bug ID in your commit message if your code works around it
+
+Severity levels:
+- **High** — Produces incorrect output or crashes
+- **Medium** — Feature gap or type system issue with workaround available
+- **Low** — Cosmetic or minor behavioral difference
