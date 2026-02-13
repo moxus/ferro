@@ -14,6 +14,7 @@ export const categories = [
   'Control Flow',
   'Data Structures',
   'Advanced',
+  'Algorithms',
 ];
 
 export const puzzles: Puzzle[] = [
@@ -370,6 +371,209 @@ export const puzzles: Puzzle[] = [
       'Base cases: if n is 0 return 0, if n is 1 return 1',
       'Recursive case: fib(n - 1) + fib(n - 2)',
       'Use if/else: if (n <= 1) { n } else { fib(n - 1) + fib(n - 2) }',
+    ],
+  },
+
+  // ── Algorithms ────────────────────────────────────
+  {
+    id: 'two_sum',
+    title: 'Two Sum',
+    description:
+      'Given a vector of integers `nums` and an integer `target`, find **two indices** such that the numbers at those indices add up to `target`.\n\n' +
+      'Return a `Vec<int>` containing the two indices.\n\n' +
+      '**Example:**\n```\nnums = [2, 7, 11, 15], target = 9\n→ [0, 1]  (because 2 + 7 = 9)\n```\n\n' +
+      'Each input has exactly one solution. You may not use the same element twice.',
+    category: 'Algorithms',
+    difficulty: 'easy',
+    starterCode:
+      'fn two_sum(nums: Vec<int>, target: int) -> Vec<int> {\n' +
+      '    // Find two indices where the values sum to target\n' +
+      '    let mut result = Vec::new();\n' +
+      '    result\n' +
+      '}\n\n' +
+      'for (n in two_sum([2, 7, 11, 15], 9)) { print(n); }\n' +
+      'for (n in two_sum([3, 2, 4], 6)) { print(n); }\n' +
+      'for (n in two_sum([1, 5, 3, 7, 2, 6], 10)) { print(n); }\n',
+    expectedOutput: '0\n1\n1\n2\n2\n3',
+    hints: [
+      'Try a brute-force approach: check every pair of indices',
+      'Use nested for loops: for i in 0..len, for j in (i+1)..len',
+      'for (i in 0..nums.len()) {\n    for (j in (i + 1)..nums.len()) {\n        if (nums[i] + nums[j] == target) {\n            result.push(i);\n            result.push(j);\n        }\n    }\n}',
+    ],
+  },
+  {
+    id: 'reverse_array',
+    title: 'Reverse Array',
+    description:
+      'Write a function that takes a `Vec<int>` and returns a **new vector** with the elements in reverse order.\n\n' +
+      '**Example:**\n```\nreverse([1, 2, 3, 4, 5]) → [5, 4, 3, 2, 1]\n```\n\n' +
+      'Do not modify the original vector — build and return a new one.',
+    category: 'Algorithms',
+    difficulty: 'easy',
+    starterCode:
+      'fn reverse(v: Vec<int>) -> Vec<int> {\n' +
+      '    // Return a new vector with elements in reverse order\n' +
+      '    let mut result = Vec::new();\n' +
+      '    result\n' +
+      '}\n\n' +
+      'let a = reverse([1, 2, 3, 4, 5]);\n' +
+      'for (n in a) { print(n); }\n\n' +
+      'let b = reverse([10, 20, 30]);\n' +
+      'for (n in b) { print(n); }\n',
+    expectedOutput: '5\n4\n3\n2\n1\n30\n20\n10',
+    hints: [
+      'Iterate from the last index down to 0 using a while loop',
+      'Start with i = v.len() - 1 and decrement until i < 0',
+      'let mut i = v.len() - 1;\nwhile (i >= 0) {\n    result.push(v[i]);\n    i = i - 1;\n}',
+    ],
+  },
+  {
+    id: 'running_sum',
+    title: 'Running Sum',
+    description:
+      'Given a vector of integers, return a new vector where each element is the **running sum** (prefix sum) up to that index.\n\n' +
+      '**Example:**\n```\nrunning_sum([1, 2, 3, 4]) → [1, 3, 6, 10]\n```\n\n' +
+      '`result[i] = nums[0] + nums[1] + ... + nums[i]`',
+    category: 'Algorithms',
+    difficulty: 'easy',
+    starterCode:
+      'fn running_sum(nums: Vec<int>) -> Vec<int> {\n' +
+      '    // Build a prefix sum array\n' +
+      '    let mut result = Vec::new();\n' +
+      '    result\n' +
+      '}\n\n' +
+      'let a = running_sum([1, 2, 3, 4]);\n' +
+      'for (n in a) { print(n); }\n\n' +
+      'let b = running_sum([3, 1, 4, 1, 5]);\n' +
+      'for (n in b) { print(n); }\n',
+    expectedOutput: '1\n3\n6\n10\n3\n4\n8\n9\n14',
+    hints: [
+      'Keep a running total as you iterate through the input',
+      'Use a mutable variable to accumulate the sum and push it each iteration',
+      'let mut total = 0;\nfor (n in nums) {\n    total = total + n;\n    result.push(total);\n}',
+    ],
+  },
+  {
+    id: 'best_time_stock',
+    title: 'Best Time to Buy and Sell Stock',
+    description:
+      'You are given a vector `prices` where `prices[i]` is the price of a stock on day `i`.\n\n' +
+      'Find the **maximum profit** you can achieve by buying on one day and selling on a later day. If no profit is possible, return `0`.\n\n' +
+      '**Example:**\n```\nprices = [7, 1, 5, 3, 6, 4] → 5\n(buy at price 1, sell at price 6)\n```',
+    category: 'Algorithms',
+    difficulty: 'easy',
+    starterCode:
+      'fn max_profit(prices: Vec<int>) -> int {\n' +
+      '    // Track the minimum price seen so far and the best profit\n' +
+      '    0\n' +
+      '}\n\n' +
+      'print(max_profit([7, 1, 5, 3, 6, 4]));\n' +
+      'print(max_profit([7, 6, 4, 3, 1]));\n' +
+      'print(max_profit([2, 4, 1, 7]));\n',
+    expectedOutput: '5\n0\n6',
+    hints: [
+      'Track the minimum price seen so far as you scan left to right',
+      'At each step, compute profit = current_price - min_price, and update the best',
+      'let mut min_price = prices[0];\nlet mut best = 0;\nfor (i in 1..prices.len()) {\n    let profit = prices[i] - min_price;\n    if (profit > best) { best = profit; }\n    if (prices[i] < min_price) { min_price = prices[i]; }\n}\nbest',
+    ],
+  },
+  {
+    id: 'merge_sorted',
+    title: 'Merge Sorted Arrays',
+    description:
+      'Given two **sorted** vectors `a` and `b`, merge them into a single sorted vector.\n\n' +
+      '**Example:**\n```\nmerge([1, 3, 5], [2, 4, 6]) → [1, 2, 3, 4, 5, 6]\n```\n\n' +
+      'Use the **two-pointer technique**: compare the front elements of each array and take the smaller one.',
+    category: 'Algorithms',
+    difficulty: 'medium',
+    starterCode:
+      'fn merge(a: Vec<int>, b: Vec<int>) -> Vec<int> {\n' +
+      '    // Merge two sorted arrays into one sorted array\n' +
+      '    let mut result = Vec::new();\n' +
+      '    result\n' +
+      '}\n\n' +
+      'let m1 = merge([1, 3, 5], [2, 4, 6]);\n' +
+      'for (n in m1) { print(n); }\n\n' +
+      'let m2 = merge([1, 2, 8], [3, 5, 7, 9]);\n' +
+      'for (n in m2) { print(n); }\n',
+    expectedOutput: '1\n2\n3\n4\n5\n6\n1\n2\n3\n5\n7\n8\n9',
+    hints: [
+      'Use two index variables (i for a, j for b) and compare a[i] vs b[j]',
+      'Push the smaller value and advance that pointer. Handle remaining elements after one array is exhausted.',
+      'let mut i = 0;\nlet mut j = 0;\nwhile (i < a.len()) {\n    if (j < b.len()) {\n        if (a[i] <= b[j]) { result.push(a[i]); i = i + 1; }\n        else { result.push(b[j]); j = j + 1; }\n    } else { result.push(a[i]); i = i + 1; }\n}\nwhile (j < b.len()) { result.push(b[j]); j = j + 1; }',
+    ],
+  },
+  {
+    id: 'binary_search',
+    title: 'Binary Search',
+    description:
+      'Implement **binary search** on a sorted vector. Return the index of `target` if found, or `-1` if not present.\n\n' +
+      '**Example:**\n```\nsearch([-1, 0, 3, 5, 9, 12], 9) → 4\nsearch([-1, 0, 3, 5, 9, 12], 2) → -1\n```\n\n' +
+      'Binary search works by repeatedly halving the search range. Use `Math::floor()` for integer division.',
+    category: 'Algorithms',
+    difficulty: 'medium',
+    starterCode:
+      'fn search(nums: Vec<int>, target: int) -> int {\n' +
+      '    // Binary search: return index of target or -1\n' +
+      '    -1\n' +
+      '}\n\n' +
+      'print(search([-1, 0, 3, 5, 9, 12], 9));\n' +
+      'print(search([-1, 0, 3, 5, 9, 12], 2));\n' +
+      'print(search([1, 3, 5, 7, 9], 1));\n',
+    expectedOutput: '4\n-1\n0',
+    hints: [
+      'Maintain low and high pointers. Compute mid by halving their sum (use a temp variable for the sum)',
+      'Compare nums[mid] to target: if equal, found it. If less, search right. If greater, search left.',
+      'let mut low = 0;\nlet mut high = nums.len() - 1;\nlet mut result = -1;\nwhile (low <= high) {\n    let sum = low + high;\n    let mid = Math::floor(sum / 2);\n    if (nums[mid] == target) {\n        result = mid;\n        low = high + 1;\n    } else {\n        if (nums[mid] < target) { low = mid + 1; }\n        else { high = mid - 1; }\n    }\n}\nresult',
+    ],
+  },
+  {
+    id: 'climbing_stairs',
+    title: 'Climbing Stairs',
+    description:
+      'You are climbing a staircase with `n` steps. Each time you can climb **1 or 2 steps**. How many distinct ways can you reach the top?\n\n' +
+      '**Example:**\n```\nclimb(2) → 2   (1+1 or 2)\nclimb(4) → 5   (1111, 112, 121, 211, 22)\n```\n\n' +
+      'This is a classic dynamic programming problem. The answer follows: `ways(n) = ways(n-1) + ways(n-2)`.',
+    category: 'Algorithms',
+    difficulty: 'medium',
+    starterCode:
+      'fn climb(n: int) -> int {\n' +
+      '    // How many distinct ways to climb n stairs?\n' +
+      '    0\n' +
+      '}\n\n' +
+      'print(climb(2));\n' +
+      'print(climb(4));\n' +
+      'print(climb(6));\n' +
+      'print(climb(10));\n',
+    expectedOutput: '2\n5\n13\n89',
+    hints: [
+      'Base cases: climb(1) = 1, climb(2) = 2. For n > 2, use bottom-up DP.',
+      'Keep two variables (a, b) representing ways(i-2) and ways(i-1), update them in a loop.',
+      'if (n <= 2) { n } else {\n    let mut a = 1;\n    let mut b = 2;\n    for (i in 3..(n + 1)) {\n        let temp = a + b;\n        a = b;\n        b = temp;\n    }\n    b\n}',
+    ],
+  },
+  {
+    id: 'max_subarray',
+    title: 'Maximum Subarray',
+    description:
+      'Given a vector of integers, find the contiguous subarray with the **largest sum** and return that sum.\n\n' +
+      '**Example:**\n```\nmax_sub([-2, 1, -3, 4, -1, 2, 1, -5, 4]) → 6\n(subarray [4, -1, 2, 1] has sum 6)\n```\n\n' +
+      'Use **Kadane\'s algorithm**: track the current subarray sum and reset when it would be better to start fresh.',
+    category: 'Algorithms',
+    difficulty: 'medium',
+    starterCode:
+      'fn max_sub(nums: Vec<int>) -> int {\n' +
+      '    // Find the maximum subarray sum\n' +
+      '    0\n' +
+      '}\n\n' +
+      'print(max_sub([-2, 1, -3, 4, -1, 2, 1, -5, 4]));\n' +
+      'print(max_sub([1]));\n' +
+      'print(max_sub([5, 4, -1, 7, 8]));\n',
+    expectedOutput: '6\n1\n23',
+    hints: [
+      'Initialize max_sum and current_sum to the first element',
+      'For each element: current = max(element, current + element). Update max_sum if current is larger.',
+      'let mut max_sum = nums[0];\nlet mut current = nums[0];\nfor (i in 1..nums.len()) {\n    if (current + nums[i] > nums[i]) {\n        current = current + nums[i];\n    } else { current = nums[i]; }\n    if (current > max_sum) { max_sum = current; }\n}\nmax_sum',
     ],
   },
 ];
