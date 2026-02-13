@@ -1,0 +1,428 @@
+import { useState, useCallback, useRef, useEffect } from 'react';
+import Editor, { type BeforeMount, type OnMount } from '@monaco-editor/react';
+import { puzzles, categories, type Puzzle } from './puzzles';
+import { compile, getDiagnostics, type DiagnosticInfo } from './compiler';
+import { execute } from './executor';
+import {
+  FERRO_LANGUAGE_ID,
+  FERRO_LANGUAGE_CONFIG,
+  FERRO_MONARCH_TOKENIZER,
+  FERRO_COMPLETIONS,
+} from './ferro-language';
+
+type MonacoInstance = Parameters<BeforeMount>[0];
+type EditorInstance = Parameters<OnMount>[0];
+
+function App() {
+  const [selectedId, setSelectedId] = useState(() => {
+    const saved = localStorage.getItem('ferro-selected');
+    if (saved && puzzles.find(p => p.id === saved)) return saved;
+    return puzzles[0].id;
+  });
+
+  const [codes, setCodes] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('ferro-codes');
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return {};
+  });
+
+  const [completed, setCompleted] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('ferro-completed');
+      if (saved) return new Set(JSON.parse(saved));
+    } catch { /* ignore */ }
+    return new Set();
+  });
+
+  const [output, setOutput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [testResult, setTestResult] = useState<'pass' | 'fail' | null>(null);
+  const [hintIndex, setHintIndex] = useState(-1);
+
+  const monacoRef = useRef<MonacoInstance | null>(null);
+  const editorRef = useRef<EditorInstance | null>(null);
+  const diagnosticTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const puzzle = puzzles.find(p => p.id === selectedId)!;
+  const code = codes[selectedId] ?? puzzle.starterCode;
+
+  // Save state to localStorage
+  const saveState = useCallback((newCodes: Record<string, string>, newCompleted: Set<string>) => {
+    localStorage.setItem('ferro-codes', JSON.stringify(newCodes));
+    localStorage.setItem('ferro-completed', JSON.stringify([...newCompleted]));
+  }, []);
+
+  const handleCodeChange = useCallback((value: string | undefined) => {
+    const newCode = value ?? '';
+    setCodes(prev => {
+      const next = { ...prev, [selectedId]: newCode };
+      localStorage.setItem('ferro-codes', JSON.stringify(next));
+      return next;
+    });
+
+    // Debounced diagnostics
+    clearTimeout(diagnosticTimerRef.current);
+    diagnosticTimerRef.current = setTimeout(() => {
+      updateDiagnostics(newCode);
+    }, 500);
+  }, [selectedId]);
+
+  const updateDiagnostics = useCallback((source: string) => {
+    const monaco = monacoRef.current;
+    const editor = editorRef.current;
+    if (!monaco || !editor) return;
+
+    const model = editor.getModel();
+    if (!model) return;
+
+    const diags = getDiagnostics(source);
+    const markers = diags.map((d: DiagnosticInfo) => ({
+      severity: monaco.MarkerSeverity.Error,
+      message: d.message,
+      startLineNumber: d.line,
+      startColumn: d.col,
+      endLineNumber: d.line,
+      endColumn: d.col + 5,
+    }));
+
+    monaco.editor.setModelMarkers(model, 'ferro', markers);
+  }, []);
+
+  const handleRun = useCallback(async () => {
+    setRunning(true);
+    setOutput('');
+    setError(null);
+    setTestResult(null);
+
+    const result = compile(code);
+
+    if (!result.code) {
+      const errorMsg = result.diagnostics.map(d => `Line ${d.line}: ${d.message}`).join('\n');
+      setError(errorMsg || 'Compilation failed');
+      setRunning(false);
+      return;
+    }
+
+    const execResult = await execute(result.code);
+
+    if (execResult.error) {
+      setOutput(execResult.output);
+      setError(execResult.error);
+      setTestResult('fail');
+    } else {
+      setOutput(execResult.output);
+      const expected = puzzle.expectedOutput.trim();
+      const actual = execResult.output.trim();
+
+      if (expected === actual) {
+        setTestResult('pass');
+        setCompleted(prev => {
+          const next = new Set(prev);
+          next.add(selectedId);
+          saveState(codes, next);
+          return next;
+        });
+      } else {
+        setTestResult('fail');
+      }
+    }
+
+    setRunning(false);
+  }, [code, puzzle, selectedId, codes, saveState]);
+
+  const handleReset = useCallback(() => {
+    setCodes(prev => {
+      const next = { ...prev };
+      delete next[selectedId];
+      localStorage.setItem('ferro-codes', JSON.stringify(next));
+      return next;
+    });
+    setOutput('');
+    setError(null);
+    setTestResult(null);
+    setHintIndex(-1);
+  }, [selectedId]);
+
+  const handleSelectPuzzle = useCallback((id: string) => {
+    setSelectedId(id);
+    localStorage.setItem('ferro-selected', id);
+    setOutput('');
+    setError(null);
+    setTestResult(null);
+    setHintIndex(-1);
+  }, []);
+
+  const handleShowHint = useCallback(() => {
+    setHintIndex(prev => Math.min(prev + 1, puzzle.hints.length - 1));
+  }, [puzzle]);
+
+  // Register Ferro language before Monaco mounts
+  const handleEditorWillMount: BeforeMount = useCallback((monaco) => {
+    monacoRef.current = monaco;
+
+    monaco.languages.register({ id: FERRO_LANGUAGE_ID });
+
+    monaco.languages.setLanguageConfiguration(FERRO_LANGUAGE_ID, FERRO_LANGUAGE_CONFIG as any);
+
+    monaco.languages.setMonarchTokensProvider(FERRO_LANGUAGE_ID, FERRO_MONARCH_TOKENIZER as any);
+
+    // Completions
+    monaco.languages.registerCompletionItemProvider(FERRO_LANGUAGE_ID, {
+      provideCompletionItems: (model, position) => {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+
+        const suggestions = FERRO_COMPLETIONS.map((c, i) => ({
+          label: c.label,
+          kind: c.label.includes('::') ? monaco.languages.CompletionItemKind.Function : monaco.languages.CompletionItemKind.Keyword,
+          insertText: c.insertText,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          detail: c.detail,
+          range,
+          sortText: String(i).padStart(3, '0'),
+        }));
+
+        return { suggestions };
+      },
+    });
+
+    // Custom dark theme
+    monaco.editor.defineTheme('ferro-dark', {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [
+        { token: 'keyword', foreground: 'c586c0' },
+        { token: 'type', foreground: '4ec9b0' },
+        { token: 'constant', foreground: '569cd6' },
+        { token: 'string', foreground: 'ce9178' },
+        { token: 'string.escape', foreground: 'd7ba7d' },
+        { token: 'string.interpolation', foreground: 'f97316' },
+        { token: 'number', foreground: 'b5cea8' },
+        { token: 'number.float', foreground: 'b5cea8' },
+        { token: 'comment', foreground: '6a9955' },
+        { token: 'operator', foreground: 'd4d4d4' },
+        { token: 'delimiter', foreground: 'd4d4d4' },
+        { token: 'entity.name.function.macro', foreground: 'dcdcaa' },
+        { token: 'keyword.operator.macro', foreground: 'f97316' },
+        { token: 'variable.other.macro', foreground: '9cdcfe' },
+        { token: 'identifier', foreground: '9cdcfe' },
+      ],
+      colors: {
+        'editor.background': '#0d1117',
+        'editor.foreground': '#e6edf3',
+        'editor.lineHighlightBackground': '#161b2280',
+        'editorLineNumber.foreground': '#3d444d',
+        'editorLineNumber.activeForeground': '#8b949e',
+        'editor.selectionBackground': '#264f78',
+        'editor.inactiveSelectionBackground': '#264f7840',
+        'editorCursor.foreground': '#f97316',
+        'editorIndentGuide.background': '#21262d',
+        'editorIndentGuide.activeBackground': '#30363d',
+      },
+    });
+  }, []);
+
+  const handleEditorDidMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+
+    // Initial diagnostics
+    updateDiagnostics(code);
+
+    // Keyboard shortcut: Ctrl/Cmd + Enter to run
+    editor.addAction({
+      id: 'ferro-run',
+      label: 'Run Code',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+      run: () => { handleRun(); },
+    });
+  }, [code, handleRun, updateDiagnostics]);
+
+  // Update editor when puzzle changes
+  useEffect(() => {
+    if (editorRef.current) {
+      const currentCode = codes[selectedId] ?? puzzle.starterCode;
+      updateDiagnostics(currentCode);
+    }
+  }, [selectedId, codes, puzzle.starterCode, updateDiagnostics]);
+
+  const completedCount = completed.size;
+  const totalCount = puzzles.length;
+
+  return (
+    <div className="app">
+      {/* Header */}
+      <header className="header">
+        <div className="logo">
+          <span className="logo-icon">Fe</span>
+          Ferro Puzzles
+        </div>
+        <div className="header-stats">
+          <strong>{completedCount}</strong> / {totalCount} completed
+        </div>
+      </header>
+
+      <div className="main">
+        {/* Sidebar */}
+        <nav className="sidebar">
+          {categories.map(cat => {
+            const catPuzzles = puzzles.filter(p => p.category === cat);
+            return (
+              <div className="category" key={cat}>
+                <div className="category-title">{cat}</div>
+                {catPuzzles.map(p => (
+                  <div
+                    key={p.id}
+                    className={`puzzle-item ${p.id === selectedId ? 'active' : ''} ${completed.has(p.id) ? 'completed' : ''}`}
+                    onClick={() => handleSelectPuzzle(p.id)}
+                  >
+                    <span className="puzzle-check">
+                      {completed.has(p.id) ? '\u2713' : '\u25CB'}
+                    </span>
+                    {p.title}
+                    <span className={`puzzle-difficulty ${p.difficulty}`}>
+                      {p.difficulty}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* Main Content */}
+        <div className="content">
+          {/* Puzzle Description */}
+          <div className="puzzle-header">
+            <h2 className="puzzle-title">{puzzle.title}</h2>
+            <div
+              className="puzzle-description"
+              dangerouslySetInnerHTML={{ __html: renderDescription(puzzle.description) }}
+            />
+          </div>
+
+          {/* Editor & Output */}
+          <div className="editor-area">
+            <div className="editor-container">
+              <Editor
+                height="100%"
+                language={FERRO_LANGUAGE_ID}
+                theme="ferro-dark"
+                value={code}
+                onChange={handleCodeChange}
+                beforeMount={handleEditorWillMount}
+                onMount={handleEditorDidMount}
+                options={{
+                  fontSize: 14,
+                  fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  padding: { top: 12 },
+                  lineNumbers: 'on',
+                  renderLineHighlight: 'line',
+                  bracketPairColorization: { enabled: true },
+                  automaticLayout: true,
+                  tabSize: 4,
+                  insertSpaces: true,
+                  wordWrap: 'on',
+                  suggestOnTriggerCharacters: true,
+                  quickSuggestions: true,
+                }}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="actions">
+              <button
+                className="btn btn-run"
+                onClick={handleRun}
+                disabled={running}
+              >
+                {running ? <><span className="spinner" /> Running...</> : 'Run'}
+              </button>
+              <button className="btn btn-secondary" onClick={handleReset}>
+                Reset
+              </button>
+              {puzzle.hints.length > 0 && (
+                <button className="btn btn-hint" onClick={handleShowHint}>
+                  Hint {hintIndex >= 0 ? `(${hintIndex + 1}/${puzzle.hints.length})` : ''}
+                </button>
+              )}
+
+              <div className="actions-right">
+                {testResult === 'pass' && (
+                  <span className="status-badge pass">All tests passed</span>
+                )}
+                {testResult === 'fail' && (
+                  <span className="status-badge fail">Output mismatch</span>
+                )}
+              </div>
+            </div>
+
+            {/* Hints */}
+            {hintIndex >= 0 && (
+              <div className="hint-box" style={{ margin: '0 16px 0' }}>
+                {puzzle.hints[hintIndex]}
+              </div>
+            )}
+
+            {/* Output */}
+            <div className="output-panel">
+              <div className="output-header">Output</div>
+              <div className={`output-content ${output || error ? 'has-output' : ''}`}>
+                {!output && !error && (
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    Click "Run" or press Ctrl+Enter to execute your code
+                  </span>
+                )}
+                {output && (
+                  <div>{output}</div>
+                )}
+                {error && (
+                  <div className="error-text">{error}</div>
+                )}
+                {testResult === 'pass' && (
+                  <div className="success-text" style={{ marginTop: '8px' }}>
+                    Correct! Your output matches the expected result.
+                  </div>
+                )}
+                {testResult === 'fail' && !error && (
+                  <div className="error-text" style={{ marginTop: '8px' }}>
+                    Expected output:{'\n'}{puzzle.expectedOutput}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Simple markdown-like renderer for puzzle descriptions
+function renderDescription(text: string): string {
+  return text
+    // Code blocks (```)
+    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Bold
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    // Lists
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+    // Line breaks
+    .replace(/\n\n/g, '<br/><br/>')
+    .replace(/\n/g, '<br/>');
+}
+
+export default App;

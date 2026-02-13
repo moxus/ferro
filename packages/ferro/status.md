@@ -463,6 +463,19 @@
 
 ---
 
+### 48. Ferro Playground (Interactive Puzzle Website)
+- [x] **Browser-Compatible Compiler**: Bundled the Ferro compiler (Lexer, Parser, Expander, Analyzer, Emitter) for browser execution via Vite. No Node.js dependencies — all pure TypeScript.
+- [x] **`ferro-playground` Package**: New `packages/ferro-playground/` workspace with Vite + React. Produces fully static output (`dist/`) deployable to any static host (Cloudflare Pages, Netlify, Vercel, etc.).
+- [x] **Monaco Editor Integration**: Full-featured code editor with custom Ferro Monarch tokenizer (syntax highlighting), keyword/snippet completions, auto-closing pairs, and a custom dark theme matching the Ferro aesthetic.
+- [x] **Real-Time Diagnostics**: Debounced semantic analysis runs on every keystroke. Parse errors and type errors appear as inline editor markers.
+- [x] **Sandboxed Execution**: User code is compiled to JavaScript (via Emitter + Sucrase type stripping), then executed in an isolated Web Worker with timeout protection against infinite loops.
+- [x] **15 Coding Puzzles**: Progressive difficulty across 4 categories (Basics, Control Flow, Data Structures, Advanced). Topics: Hello World, variables, mutability, functions, f-strings, if/else, match, for/while loops, Vec, structs, enums, closures, power function, recursion.
+- [x] **Progress Tracking**: Puzzle completion and user code saved to `localStorage`. No login or backend required.
+- [x] **Hint System**: Each puzzle has up to 3 progressive hints.
+- [x] **Static Build**: `npm run build` produces `index.html` + JS + CSS (549KB / 144KB gzipped). Zero server-side code.
+
+---
+
 ## 🚧 In Progress Features
 
 *(Nothing currently in progress)*
