@@ -1285,8 +1285,26 @@ export class Analyzer {
             if (missing.length > 0) {
                 this.error(`Non-exhaustive match: missing variant(s) ${missing.join(", ")}`, expr.token);
             }
+        } else if (matchedType.kind === "primitive" && matchedType.name === "bool") {
+            // Bool is finite: check that both true and false are covered
+            const coveredTrue = expr.arms.some(arm =>
+                arm.pattern instanceof AST.LiteralPattern &&
+                arm.pattern.value instanceof AST.BooleanLiteral &&
+                arm.pattern.value.value === true);
+            const coveredFalse = expr.arms.some(arm =>
+                arm.pattern instanceof AST.LiteralPattern &&
+                arm.pattern.value instanceof AST.BooleanLiteral &&
+                arm.pattern.value.value === false);
+            const missing: string[] = [];
+            if (!coveredTrue) missing.push("'true'");
+            if (!coveredFalse) missing.push("'false'");
+            if (missing.length > 0) {
+                this.error(`Non-exhaustive match: missing ${missing.join(" and ")}. Add the missing arms or a wildcard '_' pattern`, expr.token);
+            }
+        } else if (matchedType.kind === "primitive" || matchedType.kind === "struct" || matchedType.kind === "tuple" || matchedType.kind === "pointer" || matchedType.kind === "array" || matchedType.kind === "generic_inst") {
+            // Non-enumerable types require a wildcard pattern for exhaustiveness
+            this.error(`Non-exhaustive match: match on '${typeToString(matchedType)}' must include a wildcard '_' pattern`, expr.token);
         }
-        // For non-enum/result/option types (e.g., int, string), we can't check exhaustiveness
     }
 
     private resolveType(t: AST.Type): Type {
