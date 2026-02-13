@@ -62,6 +62,7 @@ export enum TokenType {
   Minus = "MINUS",     // -
   Star = "STAR",       // *
   Slash = "SLASH",     // /
+  Percent = "PERCENT", // %
   EqEq = "EQEQ",       // ==
   NotEq = "NOTEQ",     // !=
   LT = "LT",           // <

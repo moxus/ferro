@@ -325,6 +325,10 @@ export class Analyzer {
             return VoidType;
         }
 
+        if (expr instanceof AST.GroupedExpression) {
+            return this.visitExpression(expr.expression);
+        }
+
         if (expr instanceof AST.PrefixExpression) {
             if (expr.operator === "*") {
                 if (!this.unsafeContext) {
@@ -361,8 +365,11 @@ export class Analyzer {
                 return left;
             }
 
-            if (["+", "-", "*", "/"].includes(expr.operator)) {
-                if (typesEqual(left, IntType) && typesEqual(right, IntType)) return IntType;
+            if (["+", "-", "*", "/", "%"].includes(expr.operator)) {
+                if (typesEqual(left, IntType) && typesEqual(right, IntType)) {
+                    if (expr.operator === "/") expr.integerDivision = true;
+                    return IntType;
+                }
                 if (typesEqual(left, F64Type) && typesEqual(right, F64Type)) return F64Type;
                 // Allow string concat
                 if (expr.operator === "+" && typesEqual(left, StringType)) return StringType;
@@ -708,10 +715,18 @@ export class Analyzer {
         }
 
         if (expr instanceof AST.IndexExpression) {
-            this.visitExpression(expr.left);
+            const leftType = this.visitExpression(expr.left);
             const indexType = this.visitExpression(expr.index);
             if (!typesEqual(indexType, IntType)) {
                 this.error("Index must be an integer", expr.token);
+            }
+            // Return element type for Vec<T>
+            if (leftType.kind === "generic_inst" && leftType.name === "Vec" && leftType.args.length > 0) {
+                return leftType.args[0];
+            }
+            // Return element type for fixed-size arrays
+            if ((leftType as any).kind === "array" && (leftType as any).elementType) {
+                return (leftType as any).elementType;
             }
             return UnknownType;
         }
@@ -1169,6 +1184,8 @@ export class Analyzer {
         } else if (node instanceof AST.InfixExpression) {
             this.collectIdentifiers(node.left, result);
             this.collectIdentifiers(node.right, result);
+        } else if (node instanceof AST.GroupedExpression) {
+            this.collectIdentifiers(node.expression, result);
         } else if (node instanceof AST.PrefixExpression) {
             this.collectIdentifiers(node.right, result);
         } else if (node instanceof AST.CallExpression) {

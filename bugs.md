@@ -1,92 +1,38 @@
 # Ferro — Known Bugs
 
-## B001: Vec indexing returns unknown type in f-string interpolation
+*All previously tracked bugs have been resolved.*
 
-**Severity:** Medium
+## Resolved
+
+### B001: Vec indexing returns unknown type in f-string interpolation
+**Status:** Fixed
 **Component:** Analyzer (type inference)
-**Discovered:** 2026-02-13 (playground puzzle testing)
-
-Vec element access via indexing (e.g. `v[0]`) resolves to type `?` instead of the element type. This causes f-string interpolation to reject the expression:
-
-```ferro
-let v: Vec<int> = two_sum([2, 7, 11, 15], 9);
-print(f"{v[0]} {v[1]}");
-// error: Cannot interpolate type ? in f-string (expected int, f64, string, or bool)
-```
-
-**Workaround:** Use a `for` loop to iterate and print, or assign to a typed intermediate variable.
+**Fix:** `IndexExpression` handler now extracts the element type from `Vec<T>` generic instances and array types instead of always returning `UnknownType`.
 
 ---
 
-## B002: Emitter drops parentheses in nested arithmetic passed to function calls
+### B002: Emitter drops parentheses in nested arithmetic passed to function calls
+**Status:** Fixed
+**Component:** Parser + AST + Codegen (emitter.ts)
+**Fix:** Added `GroupedExpression` AST node. The parser now wraps `(expr)` in a `GroupedExpression` instead of discarding the parentheses. All backends (TS, LLVM) and the analyzer handle the new node.
 
-**Severity:** High
+---
+
+### B003: HashMap methods broken in TS backend
+**Status:** Fixed
 **Component:** Codegen (emitter.ts)
-**Discovered:** 2026-02-13 (playground puzzle testing)
-
-When a parenthesized arithmetic expression is passed as a function argument, the emitter strips the parentheses, producing incorrect operator precedence in the output:
-
-```ferro
-let mid = Math::floor((low + high) / 2);
-// Emits: const mid = Math.floor(low + high / 2);
-// Should emit: const mid = Math.floor((low + high) / 2);
-```
-
-This causes `high / 2` to evaluate first instead of `(low + high) / 2`, leading to incorrect results and infinite loops in algorithms like binary search.
-
-**Workaround:** Compute the sub-expression in a separate variable:
-```ferro
-let sum = low + high;
-let mid = Math::floor(sum / 2);
-```
+**Fix:** Added HashMap method translations: `.insert()` → `.set()`, `.contains_key()` → `.has()`, `.get()` → `.get()`, `.remove()` → `.delete()`, `.len()` → `.size`. Moved HashMap-specific dispatch before generic string/array method handlers to prevent `.len()` being caught by the generic `.length` mapping.
 
 ---
 
-## B003: HashMap methods broken in TS backend
-
-**Severity:** High
-**Component:** Codegen (emitter.ts)
-**Discovered:** 2026-02-13 (playground capability testing)
-
-HashMap `.insert()`, `.contains_key()`, and `.len()` do not work in the TypeScript backend. Only `.get()` works correctly.
-
-```ferro
-let mut map = HashMap::new();
-map.insert("key", 42);   // broken
-map.contains_key("key");  // broken
-map.len();                 // broken
-```
-
-**Workaround:** None. Avoid HashMap mutations in TS-targeted code.
+### B004: No modulo operator
+**Status:** Fixed
+**Component:** Lexer, Parser, Analyzer, Codegen
+**Fix:** Added `Percent` token type, lexer case for `%`, parser precedence at PRODUCT level, infix parser registration, analyzer arithmetic type checking for `%`, TS backend pass-through, and LLVM backend support (`srem` for integers, `frem` for floats).
 
 ---
 
-## B004: No modulo operator
-
-**Severity:** Medium
-**Component:** Lexer
-**Discovered:** 2026-02-13 (playground puzzle testing)
-
-The `%` character is lexed as `ILLEGAL`. There is no modulo/remainder operator.
-
-```ferro
-let r = 10 % 3;  // lexer error: ILLEGAL token
-```
-
-**Workaround:** Compute manually: `a - Math::floor(a / b) * b`
-
----
-
-## B005: Integer division produces float
-
-**Severity:** Low
-**Component:** Codegen / Type system
-**Discovered:** 2026-02-13 (playground capability testing)
-
-Division of two integers produces a float result (follows JavaScript semantics), not a truncated integer:
-
-```ferro
-let x = 7 / 2;  // produces 3.5, not 3
-```
-
-**Workaround:** Wrap with `Math::floor()`: `Math::floor(7 / 2)` → `3`
+### B005: Integer division produces float
+**Status:** Fixed
+**Component:** AST + Analyzer + Codegen (emitter.ts)
+**Fix:** Added `integerDivision` annotation to `InfixExpression`. The analyzer sets this flag when both operands are `int` and the operator is `/`. The TS emitter wraps such expressions with `Math.floor()` to match Rust truncating division semantics. The LLVM backend already used `sdiv` (truncating) so no change was needed there.

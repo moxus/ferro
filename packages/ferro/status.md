@@ -1,6 +1,6 @@
 # Ferro Status Log
 
-**Date:** February 13, 2026
+**Date:** February 13, 2026 (updated)
 **Project Name:** Ferro (Rusty addon for JS/TS with Native LLVM support)
 
 ---
@@ -473,6 +473,15 @@
 - [x] **Progress Tracking**: Puzzle completion and user code saved to `localStorage`. No login or backend required.
 - [x] **Hint System**: Each puzzle has up to 3 progressive hints.
 - [x] **Static Build**: `npm run build` produces `index.html` + JS + CSS (549KB / 144KB gzipped). Zero server-side code.
+
+---
+
+### 49. Bug Fixes (B001–B005)
+- [x] **B001 — Vec Index Type Inference**: `v[i]` on `Vec<T>` now returns `T` instead of `?`. Fixed `IndexExpression` handler in the analyzer.
+- [x] **B002 — Parentheses Preservation**: Added `GroupedExpression` AST node so `(expr)` parentheses survive from parser through to emitted output. Fixes incorrect operator precedence in generated code.
+- [x] **B003 — HashMap TS Methods**: `.insert()` → `.set()`, `.contains_key()` → `.has()`, `.len()` → `.size`, `.remove()` → `.delete()`, `.get()` → `.get()`. Reordered method dispatch to prioritize HashMap-specific handlers.
+- [x] **B004 — Modulo Operator (`%`)**: Full-stack support — `Percent` token, lexer, parser (PRODUCT precedence), analyzer type checking, TS pass-through, LLVM `srem`/`frem`.
+- [x] **B005 — Integer Division Truncation**: Analyzer annotates `int / int` with `integerDivision` flag; TS emitter wraps with `Math.floor()` to match Rust semantics.
 
 ---
 

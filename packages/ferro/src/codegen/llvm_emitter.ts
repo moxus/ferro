@@ -1659,6 +1659,9 @@ export class LLVMEmitter {
         if (expr instanceof AST.MethodCallExpression) {
             return this.getMethodCallReturnType(expr);
         }
+        if (expr instanceof AST.GroupedExpression) {
+            return this.getExpressionType(expr.expression);
+        }
         if (expr instanceof AST.PrefixExpression && expr.operator === "*") {
             const t = this.getExpressionType(expr.right);
             return t.endsWith("*") ? t.slice(0, -1) : "i32";
@@ -1758,6 +1761,7 @@ export class LLVMEmitter {
         if (expr instanceof AST.MatchExpression) return this.emitMatchExpression(expr);
         if (expr instanceof AST.StaticCallExpression) return this.emitStaticCallExpression(expr);
 
+        if (expr instanceof AST.GroupedExpression) return this.emitExpression(expr.expression);
         if (expr instanceof AST.IntegerLiteral) return expr.value.toString();
         if (expr instanceof AST.FloatLiteral) {
             // LLVM requires hex representation for exact double constants, but
@@ -1948,6 +1952,7 @@ export class LLVMEmitter {
                     case "-": fop = "fsub"; break;
                     case "*": fop = "fmul"; break;
                     case "/": fop = "fdiv"; break;
+                    case "%": fop = "frem"; break;
                 }
                 if (fop) { this.output += `  ${reg} = ${fop} double ${left}, ${right}\n`; return reg; }
             }
@@ -1959,6 +1964,7 @@ export class LLVMEmitter {
                 case "-": op = "sub"; break;
                 case "*": op = "mul"; break;
                 case "/": op = "sdiv"; break;
+                case "%": op = "srem"; break;
             }
             if (op) { this.output += `  ${reg} = ${op} i32 ${left}, ${right}\n`; return reg; }
             return "0";

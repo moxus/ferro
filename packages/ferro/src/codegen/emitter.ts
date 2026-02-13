@@ -85,10 +85,16 @@ export class Emitter {
         if (node instanceof AST.Identifier) {
             return node.value;
         }
+        if (node instanceof AST.GroupedExpression) {
+            return `(${this.emit(node.expression)})`;
+        }
         if (node instanceof AST.PrefixExpression) {
             return `${node.operator}${this.emit(node.right)}`;
         }
         if (node instanceof AST.InfixExpression) {
+            if (node.integerDivision) {
+                return `Math.floor(${this.emit(node.left)} ${node.operator} ${this.emit(node.right)})`;
+            }
             return `${this.emit(node.left)} ${node.operator} ${this.emit(node.right)}`;
         }
         if (node instanceof AST.IfExpression) {
@@ -136,6 +142,16 @@ export class Emitter {
             if (method === "map_err" && node.arguments.length >= 1) return `_result_map_err(${obj}, ${this.emit(node.arguments[0])})`;
             if (method === "and_then" && node.arguments.length >= 1) return `_result_and_then(${obj}, ${this.emit(node.arguments[0])})`;
             if (method === "or_else" && node.arguments.length >= 1) return `_result_or_else(${obj}, ${this.emit(node.arguments[0])})`;
+            // HashMap methods — translate Rust-style Map API to JS Map API (must come before generic string/array methods)
+            if (node.object instanceof AST.Identifier && this.hashMapVars.has(node.object.value)) {
+                if (method === "insert" && node.arguments.length === 2) return `${obj}.set(${this.emit(node.arguments[0])}, ${this.emit(node.arguments[1])})`;
+                if (method === "get" && node.arguments.length === 1) return `${obj}.get(${this.emit(node.arguments[0])})`;
+                if (method === "contains_key" && node.arguments.length === 1) return `${obj}.has(${this.emit(node.arguments[0])})`;
+                if (method === "remove" && node.arguments.length === 1) return `${obj}.delete(${this.emit(node.arguments[0])})`;
+                if (method === "len" && node.arguments.length === 0) return `${obj}.size`;
+                if (method === "keys" || method === "keys_iter") return `[...${obj}.keys()]`;
+                if (method === "values" || method === "values_iter") return `[...${obj}.values()]`;
+            }
             // String methods — dispatch to native JS string methods
             if (method === "len" && node.arguments.length === 0) return `${obj}.length`;
             if (method === "contains" && node.arguments.length === 1) return `${obj}.includes(${this.emit(node.arguments[0])})`;
@@ -168,11 +184,6 @@ export class Emitter {
             if (method === "for_each") {
                 const args = node.arguments.map(a => this.emit(a)).join(", ");
                 return `${obj}.forEach(${args})`;
-            }
-            // HashMap keys()/values()/keys_iter()/values_iter() return iterators in JS, need to spread into arrays
-            if (node.object instanceof AST.Identifier && this.hashMapVars.has(node.object.value)) {
-                if (method === "keys" || method === "keys_iter") return `[...${obj}.keys()]`;
-                if (method === "values" || method === "values_iter") return `[...${obj}.values()]`;
             }
             // Check if receiver is a struct variable with inherent impl methods
             if (node.object instanceof AST.Identifier && this.structVars.has(node.object.value)) {
@@ -1003,6 +1014,9 @@ ${arms}
         }
         if (node instanceof AST.InfixExpression) {
             return this.hasQuestionMark(node.left) || this.hasQuestionMark(node.right);
+        }
+        if (node instanceof AST.GroupedExpression) {
+            return this.hasQuestionMark(node.expression);
         }
         if (node instanceof AST.PrefixExpression) {
             return this.hasQuestionMark(node.right);

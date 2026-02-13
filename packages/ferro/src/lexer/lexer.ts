@@ -121,6 +121,9 @@ export class Lexer {
           tok = { type: TokenType.Slash, literal: this.ch, line, column: col };
         }
         break;
+      case "%":
+        tok = { type: TokenType.Percent, literal: this.ch, line, column: col };
+        break;
       case "<":
         if (this.peekChar() === "=") {
           const ch = this.ch;
