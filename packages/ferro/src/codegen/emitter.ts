@@ -485,10 +485,10 @@ function _weak_upgrade(ref: any) { const v = ref.deref(); return v !== undefined
         lines.push(`const ${enumName} = {`);
         node.variants.forEach(v => {
             if (v.fields.length === 0) {
-                lines.push(`  ${v.name.value}: "${v.name.value}",`);
+                lines.push(`  ${v.name.value}: "${v.name.value.toLowerCase()}",`);
             } else {
                 const params = v.fields.map((_, i) => `_${i}`).join(", ");
-                lines.push(`  ${v.name.value}: (${params}) => ({ tag: "${v.name.value}", ${params} }),`);
+                lines.push(`  ${v.name.value}: (${params}) => ({ tag: "${v.name.value.toLowerCase()}", ${params} }),`);
             }
         });
         lines.push(`};`);
@@ -826,7 +826,7 @@ ${arms}
                     body = `return ${this.emit(arm.body.expression)};`;
                 }
 
-                return `case "${variantName}": { ${bindings}\n${body} }`;
+                return `case "${variantName.toLowerCase()}": { ${bindings}\n${body} }`;
             } else if (arm.pattern instanceof AST.WildcardPattern) {
                 let body = "";
                 if (arm.body instanceof AST.BlockStatement) {
