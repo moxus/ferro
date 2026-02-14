@@ -485,7 +485,7 @@ function _weak_upgrade(ref: any) { const v = ref.deref(); return v !== undefined
         lines.push(`const ${enumName} = {`);
         node.variants.forEach(v => {
             if (v.fields.length === 0) {
-                lines.push(`  ${v.name.value}: { tag: "${v.name.value}" },`);
+                lines.push(`  ${v.name.value}: "${v.name.value}",`);
             } else {
                 const params = v.fields.map((_, i) => `_${i}`).join(", ");
                 lines.push(`  ${v.name.value}: (${params}) => ({ tag: "${v.name.value}", ${params} }),`);
@@ -839,7 +839,7 @@ ${arms}
             return "";
         }).join("\n");
 
-        return `(() => { const __match_val = ${value}; switch(__match_val.tag) {
+        return `(() => { const __match_val = ${value}; switch(typeof __match_val === "object" ? __match_val.tag : __match_val) {
 ${arms}
 } })()`;
     }
