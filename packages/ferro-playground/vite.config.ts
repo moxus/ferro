@@ -4,6 +4,7 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  base: '/ferro/',
   resolve: {
     alias: {
       '@ferro': path.resolve(__dirname, '../ferro/src')
