@@ -82,6 +82,12 @@ body {
   color: white;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .header-stats {
   font-size: 13px;
   color: var(--text-secondary);
@@ -89,6 +95,17 @@ body {
 
 .header-stats strong {
   color: var(--accent);
+}
+
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  transition: color 0.15s;
+}
+
+.github-link:hover {
+  color: var(--text-primary);
 }
 
 .main {
