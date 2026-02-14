@@ -21,6 +21,8 @@ Ferro is a Rust-inspired programming language for the JavaScript/TypeScript ecos
 - **Self-hosted runtime** written entirely in Ferro
 - **LSP and VSCode extension** for editor support
 
+**[Try Ferro Coding Puzzles](https://moxus.github.io/ferro/)** &mdash; solve interactive challenges and learn the language hands-on.
+
 ---
 
 ## Getting Started
