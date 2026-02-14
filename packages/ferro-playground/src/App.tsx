@@ -41,6 +41,7 @@ function App() {
   const [running, setRunning] = useState(false);
   const [testResult, setTestResult] = useState<'pass' | 'fail' | null>(null);
   const [hintIndex, setHintIndex] = useState(-1);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const monacoRef = useRef<MonacoInstance | null>(null);
   const editorRef = useRef<EditorInstance | null>(null);
@@ -153,6 +154,7 @@ function App() {
     setError(null);
     setTestResult(null);
     setHintIndex(-1);
+    setSidebarOpen(false);
   }, []);
 
   const handleShowHint = useCallback(() => {
@@ -262,6 +264,13 @@ function App() {
       {/* Header */}
       <header className="header">
         <div className="logo">
+          <button
+            className="hamburger"
+            onClick={() => setSidebarOpen(prev => !prev)}
+            aria-label="Toggle navigation"
+          >
+            <span /><span /><span />
+          </button>
           <span className="logo-icon">Fe</span>
           Ferro Puzzles
         </div>
@@ -271,8 +280,13 @@ function App() {
       </header>
 
       <div className="main">
+        {/* Mobile backdrop */}
+        {sidebarOpen && (
+          <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+        )}
+
         {/* Sidebar */}
-        <nav className="sidebar">
+        <nav className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
           {categories.map(cat => {
             const catPuzzles = puzzles.filter(p => p.category === cat);
             return (
